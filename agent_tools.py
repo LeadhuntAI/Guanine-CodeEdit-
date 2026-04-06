@@ -127,6 +127,7 @@ def checkout_file(path: str, session_id: str, repo_path: str,
         return json.dumps({
             "checked_out": True,
             "path": path,
+            "workspace_file_path": os.path.abspath(ws_target),
             "hash": file_hash,
             "lines": line_count,
             "preview": preview

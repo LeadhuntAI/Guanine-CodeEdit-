@@ -12,5 +12,28 @@
         "PYTHONPATH": "C:\\Projects\\360Marketing\\Guanine(CodeEdit)\\spark\\vendors\\jcodemunch\\src"
       }
     }
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/sandbox-guard.sh"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/session-start.sh"
+          }
+        ]
+      }
+    ]
   }
 }

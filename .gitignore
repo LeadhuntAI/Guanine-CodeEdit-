@@ -11,3 +11,4 @@ dist/
 build/
 .code-index/
 0.12.0
+.claude/sandbox-active

@@ -29,7 +29,6 @@ from datetime import datetime
 from pathlib import Path
 from dataclasses import dataclass, field, asdict
 from typing import Optional
-from urllib.parse import unquote
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from flask import (
@@ -246,190 +245,15 @@ class FileScanner:
             self._progress_queue.put(('error', f"Error scanning {rel_path}: {e}"))
             return None
 
-    @staticmethod
-    def _is_editor_history_dir(path: str) -> bool:
-        """Detect if a directory is a Windsurf/VS Code/Cursor local history folder.
-        These contain hashed subdirectories, each with an entries.json file."""
-        try:
-            # Check first few subdirectories for entries.json
-            checked = 0
-            found = 0
-            for name in os.listdir(path):
-                subdir = os.path.join(path, name)
-                if os.path.isdir(subdir):
-                    checked += 1
-                    if os.path.isfile(os.path.join(subdir, 'entries.json')):
-                        found += 1
-                    if checked >= 5:
-                        break
-            # If most subdirs have entries.json, it's an editor history dir
-            return checked >= 2 and found >= (checked * 0.5)
-        except OSError:
-            return False
-
-    def _scan_editor_history_source(self, source: SourceConfig, project_filter: str = "") -> dict:
-        """Scan an editor history directory, resolving hashed entries to real file paths."""
-        result = {}
-        root = source.path
-        project_filter_norm = project_filter.rstrip('\\').rstrip('/') if project_filter else ""
-
-        self._progress_queue.put(('info', f"Detected editor history format for '{source.name}', parsing entries.json files..."))
-
-        # Collect all entries: keyed by original path -> list of (timestamp, source_file)
-        all_entries = {}
-        scanned = 0
-
-        try:
-            dirs = [d for d in os.listdir(root) if os.path.isdir(os.path.join(root, d))]
-        except OSError:
-            return result
-
-        for dirname in dirs:
-            dir_path = os.path.join(root, dirname)
-            entries_file = os.path.join(dir_path, 'entries.json')
-            scanned += 1
-
-            if not os.path.isfile(entries_file):
-                continue
-
-            try:
-                with open(entries_file, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-            except (json.JSONDecodeError, OSError):
-                continue
-
-            resource = data.get('resource')
-            if not resource:
-                continue
-
-            original_path = EditorHistoryExtractor._uri_to_path(resource)
-
-            # Filter by project folder if specified
-            if project_filter_norm:
-                if not original_path.lower().startswith(project_filter_norm.lower()):
-                    continue
-
-            # Find the best (newest) entry
-            best_entry = None
-            best_ts = 0
-            for entry in data.get('entries', []):
-                ts = entry.get('timestamp', 0)
-                if ts > best_ts:
-                    best_ts = ts
-                    best_entry = entry
-
-            if not best_entry:
-                continue
-
-            # Find the actual backup file (same 3-method logic as EditorHistoryExtractor)
-            source_file = None
-
-            # Method 1: entry.id as filename in history dir
-            entry_id = best_entry.get('id')
-            if entry_id:
-                candidate = os.path.join(dir_path, entry_id)
-                if os.path.isfile(candidate):
-                    source_file = candidate
-
-            # Method 2: entry.source as path
-            if not source_file:
-                entry_source = best_entry.get('source')
-                if entry_source:
-                    sf = EditorHistoryExtractor._uri_to_path(entry_source)
-                    if os.path.isfile(sf):
-                        source_file = sf
-
-            # Method 3: newest file in directory (excluding entries.json)
-            if not source_file:
-                try:
-                    candidates = [
-                        os.path.join(dir_path, f)
-                        for f in os.listdir(dir_path)
-                        if f != 'entries.json' and os.path.isfile(os.path.join(dir_path, f))
-                    ]
-                    if candidates:
-                        candidates.sort(key=lambda x: os.path.getmtime(x), reverse=True)
-                        source_file = candidates[0]
-                except OSError:
-                    pass
-
-            if not source_file:
-                continue
-
-            # Compute the relative path from the original file path
-            if project_filter_norm:
-                rel_path = original_path[len(project_filter_norm):].lstrip('\\').lstrip('/')
-            else:
-                # Strip drive letter: C:\foo\bar.py -> foo/bar.py
-                rel_path = re.sub(r'^[A-Za-z]:[\\\/]', '', original_path)
-
-            rel_path = rel_path.replace('\\', '/')
-            if not rel_path or self.should_ignore(rel_path):
-                continue
-
-            # Only keep the newest version per file (since history may have multiple)
-            key = rel_path.lower()
-            if key in all_entries and all_entries[key]['timestamp'] >= best_ts:
-                continue
-
-            all_entries[key] = {
-                'rel_path': rel_path,
-                'source_file': source_file,
-                'timestamp': best_ts,
-                'original_path': original_path,
-            }
-
-            if scanned % 200 == 0:
-                self._progress_queue.put(('progress', self._scan_done + scanned, self._scan_total))
-
-        self._progress_queue.put(('info',
-            f"Editor history '{source.name}': found {len(all_entries)} files from {scanned} entries"))
-        self._progress_queue.put(('source_count', source.name, len(all_entries)))
-
-        # Now scan each resolved file with its real relative path
-        with ThreadPoolExecutor(max_workers=8) as pool:
-            futures = {}
-            for entry_data in all_entries.values():
-                rel = entry_data['rel_path']
-                abs_path = entry_data['source_file']
-                fut = pool.submit(self.scan_file, source.name, root, abs_path, rel)
-                futures[fut] = (rel, entry_data['timestamp'])
-
-            for fut in as_completed(futures):
-                rel, ts = futures[fut]
-                try:
-                    version = fut.result()
-                    if version:
-                        version.relative_path = rel
-                        # Use the history timestamp as modified time (more accurate)
-                        if ts > 0:
-                            version.modified_time = ts / 1000.0
-                        result[rel] = version
-                except Exception as e:
-                    self._progress_queue.put(('error', f"Error: {rel}: {e}"))
-                self._scan_done += 1
-                if self._scan_done % 50 == 0:
-                    self._progress_queue.put(('progress', self._scan_done, self._scan_total))
-
-        self._progress_queue.put(('source_done', source.name, len(result)))
-        return result
-
     def scan_source(self, source: SourceConfig) -> dict:
-        """Scan a source directory and return dict of rel_path -> FileVersion.
-        Auto-detects editor history directories and parses them accordingly."""
+        """Scan a source directory and return dict of rel_path -> FileVersion."""
         result = {}
         root = source.path
         if not os.path.isdir(root):
             self._progress_queue.put(('error', f"Source not found: {root}"))
             return result
 
-        # Auto-detect editor history directories
-        if self._is_editor_history_dir(root):
-            # Try to infer project filter from state
-            project_filter = state.get('_editor_history_project_filter', '')
-            return self._scan_editor_history_source(source, project_filter)
-
-        # Normal directory scan
+        # Directory scan
         # First pass: collect all file paths
         file_paths = []
         for dirpath, dirnames, filenames in os.walk(root):
@@ -670,337 +494,6 @@ class MergeEngine:
     def save_log(self, filepath: str):
         with open(filepath, 'w', encoding='utf-8') as f:
             json.dump(self.log_entries, f, indent=2, ensure_ascii=False)
-
-
-# ---------------------------------------------------------------------------
-# Recovery Advisor
-# ---------------------------------------------------------------------------
-
-class RecoveryAdvisor:
-    @staticmethod
-    def get_suggestions(source_dirs: list) -> list:
-        suggestions = []
-
-        # Check for .git in any source
-        for src in source_dirs:
-            git_dir = os.path.join(src, '.git')
-            if os.path.isdir(git_dir):
-                suggestions.append({
-                    'type': 'git_reflog',
-                    'title': f'Git Reflog available in: {src}',
-                    'description': 'The .git directory exists. You can recover deleted files from git history.',
-                    'commands': [
-                        f'cd "{src}"',
-                        'git reflog --all',
-                        'git log --diff-filter=D --summary',
-                        'git checkout <commit-hash> -- path/to/file',
-                    ]
-                })
-                suggestions.append({
-                    'type': 'git_fsck',
-                    'title': f'Git lost-found objects in: {src}',
-                    'description': 'Find dangling commits and blobs that may contain deleted files.',
-                    'commands': [
-                        f'cd "{src}"',
-                        'git fsck --lost-found',
-                        'ls .git/lost-found/other/',
-                    ]
-                })
-                suggestions.append({
-                    'type': 'git_stash',
-                    'title': f'Git stash in: {src}',
-                    'description': 'Check for stashed changes.',
-                    'commands': [
-                        f'cd "{src}"',
-                        'git stash list',
-                        'git stash show -p stash@{0}',
-                    ]
-                })
-                break  # Only suggest once
-
-        suggestions.append({
-            'type': 'shadow_copies',
-            'title': 'Windows Shadow Copies (Volume Snapshots)',
-            'description': 'Windows may have automatic volume shadow copies. Run as Administrator:',
-            'commands': [
-                'vssadmin list shadows',
-                '# Then access via: \\\\?\\GLOBALROOT\\Device\\HarddiskVolumeShadowCopyN\\',
-            ]
-        })
-
-        suggestions.append({
-            'type': 'file_history',
-            'title': 'Windows File History',
-            'description': 'Check if Windows File History is enabled (Settings > Update & Security > Backup).',
-            'commands': [
-                '# Check: Settings > Update & Security > Backup',
-                '# Or browse: %LOCALAPPDATA%\\FileHistory\\',
-            ]
-        })
-
-        suggestions.append({
-            'type': 'recycle_bin',
-            'title': 'Recycle Bin',
-            'description': 'Check the Recycle Bin for recently deleted files. Sort by date deleted.',
-            'commands': ['# Open Recycle Bin from Desktop or Explorer']
-        })
-
-        suggestions.append({
-            'type': 'temp_dirs',
-            'title': 'Temp / Autosave Directories',
-            'description': 'Check temp directories for editor autosave files.',
-            'commands': [
-                f'dir "%TEMP%" /s /b | findstr /i ".py .html .js .css"',
-                f'dir "%LOCALAPPDATA%\\Temp" /s /b | findstr /i ".py .html .js"',
-            ]
-        })
-
-        return suggestions
-
-
-# ---------------------------------------------------------------------------
-# Editor History Extractor (Windsurf, VS Code, Cursor)
-# ---------------------------------------------------------------------------
-
-class EditorHistoryExtractor:
-    """
-    Scans Windsurf / VS Code / Cursor local history directories,
-    parses entries.json files, and extracts files with their original
-    names and folder structure into a destination directory.
-    """
-
-    EDITOR_HISTORY_PATHS = [
-        ("Windsurf", os.path.join(os.environ.get('APPDATA', ''), 'Windsurf', 'User', 'History')),
-        ("Windsurf (alt)", os.path.join(os.environ.get('APPDATA', ''), 'Windsurf - Next', 'User', 'History')),
-        ("Windsurf Codeium", os.path.join(os.environ.get('USERPROFILE', ''), '.codeium', 'windsurf', 'User', 'History')),
-        ("Windsurf LocalLow", os.path.join(os.environ.get('USERPROFILE', ''), 'AppData', 'LocalLow', 'Windsurf', 'User', 'History')),
-        ("Windsurf Local", os.path.join(os.environ.get('LOCALAPPDATA', ''), 'Windsurf', 'User', 'History')),
-        ("VS Code", os.path.join(os.environ.get('APPDATA', ''), 'Code', 'User', 'History')),
-        ("VS Code Insiders", os.path.join(os.environ.get('APPDATA', ''), 'Code - Insiders', 'User', 'History')),
-        ("Cursor", os.path.join(os.environ.get('APPDATA', ''), 'Cursor', 'User', 'History')),
-    ]
-
-    def __init__(self, project_folder: str = "", progress_queue: queue.Queue = None):
-        self.project_folder = project_folder.rstrip('\\').rstrip('/') if project_folder else ""
-        self._progress = progress_queue or queue.Queue()
-
-    @staticmethod
-    def _uri_to_path(uri: str) -> str:
-        """Convert file:/// URI to a local path."""
-        p = re.sub(r'^file:///', '', uri)
-        p = unquote(p)
-        p = p.replace('/', '\\')
-        if re.match(r'^[a-zA-Z]:\\', p):
-            p = p[0].upper() + p[1:]
-        return p
-
-    def find_history_sources(self) -> list:
-        """Return list of (name, path) for existing history directories."""
-        found = []
-        for name, path in self.EDITOR_HISTORY_PATHS:
-            if path and os.path.isdir(path):
-                count = len([d for d in os.listdir(path)
-                             if os.path.isdir(os.path.join(path, d))])
-                found.append({'name': name, 'path': path, 'entry_count': count})
-        return found
-
-    def extract_all(self, dest_dir: str, project_filter: str = "",
-                    hours: int = 120000) -> dict:
-        """
-        Extract files from all editor history sources into dest_dir,
-        preserving original filenames and folder structure.
-
-        Args:
-            dest_dir: Where to write extracted files
-            project_filter: Only extract files whose original path starts with this
-            hours: How far back to look (in hours)
-
-        Returns:
-            Dict with stats about extraction
-        """
-        from datetime import timedelta
-        cutoff = datetime.now() - timedelta(hours=hours)
-        cutoff_ts = cutoff.timestamp() * 1000  # milliseconds
-
-        sources = self.find_history_sources()
-        if not sources:
-            self._progress.put(('error', 'No editor history directories found.'))
-            return {'extracted': 0, 'skipped': 0, 'errors': 0, 'sources_found': 0}
-
-        self._progress.put(('info', f'Found {len(sources)} history source(s)'))
-
-        # Collect all file entries across all sources: keyed by original path
-        # Each entry: {original_path, best_timestamp, source_file, source_name}
-        all_files = {}
-        total_scanned = 0
-        total_entries = 0
-        total_matched = 0
-
-        project_filter_norm = project_filter.rstrip('\\').rstrip('/') if project_filter else ""
-
-        for src in sources:
-            hist_path = src['path']
-            src_name = src['name']
-            self._progress.put(('scanning_history', src_name, src['entry_count']))
-
-            try:
-                dirs = [d for d in os.listdir(hist_path)
-                        if os.path.isdir(os.path.join(hist_path, d))]
-            except OSError:
-                continue
-
-            for dirname in dirs:
-                total_scanned += 1
-                dir_path = os.path.join(hist_path, dirname)
-                entries_file = os.path.join(dir_path, 'entries.json')
-
-                if not os.path.isfile(entries_file):
-                    continue
-                total_entries += 1
-
-                try:
-                    with open(entries_file, 'r', encoding='utf-8') as f:
-                        data = json.load(f)
-                except (json.JSONDecodeError, OSError):
-                    continue
-
-                resource = data.get('resource')
-                if not resource:
-                    continue
-
-                original_path = self._uri_to_path(resource)
-
-                # Filter by project folder if specified
-                if project_filter_norm:
-                    if not original_path.lower().startswith(project_filter_norm.lower()):
-                        continue
-                total_matched += 1
-
-                # Find best (newest) entry
-                best_entry = None
-                best_ts = 0
-
-                for entry in data.get('entries', []):
-                    ts = entry.get('timestamp', 0)
-                    if ts < cutoff_ts:
-                        continue
-                    if ts > best_ts:
-                        best_ts = ts
-                        best_entry = entry
-
-                if not best_entry:
-                    continue
-
-                # Find the actual backup file
-                source_file = None
-
-                # Method 1: entry.id as filename in history dir
-                entry_id = best_entry.get('id')
-                if entry_id:
-                    candidate = os.path.join(dir_path, entry_id)
-                    if os.path.isfile(candidate):
-                        source_file = candidate
-
-                # Method 2: entry.source as path
-                if not source_file:
-                    entry_source = best_entry.get('source')
-                    if entry_source:
-                        sf = self._uri_to_path(entry_source)
-                        if os.path.isfile(sf):
-                            source_file = sf
-
-                # Method 3: newest file in directory (excluding entries.json)
-                if not source_file:
-                    try:
-                        candidates = [
-                            os.path.join(dir_path, f)
-                            for f in os.listdir(dir_path)
-                            if f != 'entries.json' and os.path.isfile(os.path.join(dir_path, f))
-                        ]
-                        if candidates:
-                            candidates.sort(key=lambda x: os.path.getmtime(x), reverse=True)
-                            source_file = candidates[0]
-                    except OSError:
-                        pass
-
-                if not source_file:
-                    continue
-
-                # Keep only the newest version per original path
-                key = original_path.lower()
-                if key not in all_files or best_ts > all_files[key]['timestamp']:
-                    all_files[key] = {
-                        'original_path': original_path,
-                        'timestamp': best_ts,
-                        'source_file': source_file,
-                        'source_name': src_name,
-                    }
-
-                if total_scanned % 200 == 0:
-                    self._progress.put(('extract_progress', total_scanned, total_matched))
-
-        self._progress.put(('info',
-            f'Scanned {total_scanned} dirs, {total_entries} entries.json, '
-            f'{total_matched} project matches, {len(all_files)} unique files'))
-
-        # Now copy all found files to dest_dir with original names/structure
-        os.makedirs(dest_dir, exist_ok=True)
-        extracted = 0
-        errors = 0
-        skipped = 0
-
-        for file_info in all_files.values():
-            original = file_info['original_path']
-
-            # Compute relative path
-            if project_filter_norm:
-                rel_path = original[len(project_filter_norm):].lstrip('\\').lstrip('/')
-            else:
-                # Use the full path structure under a drive-letter subfolder
-                # e.g., C:\foo\bar.py -> C/foo/bar.py
-                rel_path = original.replace(':', '').lstrip('\\').lstrip('/')
-
-            dest_path = os.path.join(dest_dir, rel_path)
-
-            try:
-                os.makedirs(os.path.dirname(dest_path), exist_ok=True)
-
-                # Skip if destination already exists and is newer
-                if os.path.isfile(dest_path):
-                    existing_mtime = os.path.getmtime(dest_path) * 1000
-                    if existing_mtime >= file_info['timestamp']:
-                        skipped += 1
-                        continue
-
-                shutil.copy2(file_info['source_file'], dest_path)
-
-                # Try to set the modification time to the history timestamp
-                try:
-                    ts_seconds = file_info['timestamp'] / 1000.0
-                    os.utime(dest_path, (ts_seconds, ts_seconds))
-                except OSError:
-                    pass
-
-                extracted += 1
-            except (OSError, PermissionError) as e:
-                errors += 1
-                self._progress.put(('error', f'Copy error: {rel_path}: {e}'))
-
-            if (extracted + errors) % 50 == 0:
-                self._progress.put(('extract_copy_progress', extracted + errors, len(all_files)))
-
-        result = {
-            'extracted': extracted,
-            'skipped': skipped,
-            'errors': errors,
-            'total_unique': len(all_files),
-            'sources_found': len(sources),
-            'dirs_scanned': total_scanned,
-            'entries_found': total_entries,
-            'project_matches': total_matched,
-        }
-        self._progress.put(('extract_done', result))
-        return result
 
 
 # ---------------------------------------------------------------------------
@@ -1249,18 +742,6 @@ def list_sessions() -> list:
                     sessions.append(meta)
                 except sqlite3.Error:
                     pass
-            elif os.path.isfile(meta_json):
-                # Legacy JSON session
-                try:
-                    with open(meta_json, 'r', encoding='utf-8') as f:
-                        meta = json.load(f)
-                    meta['id'] = name
-                    inv_path = os.path.join(sdir, 'inventory.json')
-                    meta['has_inventory'] = os.path.isfile(inv_path)
-                    meta['_legacy'] = True
-                    sessions.append(meta)
-                except (OSError, json.JSONDecodeError):
-                    pass
     except OSError:
         pass
     sessions.sort(key=lambda s: s.get('updated_at', ''), reverse=True)
@@ -1338,7 +819,6 @@ def save_config(sources, target_dir, ignore_patterns):
         'sources': [{'name': s.name, 'path': s.path, 'priority': s.priority} for s in sources],
         'target_dir': target_dir,
         'ignore_patterns': sorted(ignore_patterns),
-        'project_filter': state.get('_editor_history_project_filter', ''),
         'saved_at': datetime.now().isoformat(),
     }
     for k, v in data.items():
@@ -1348,19 +828,12 @@ def save_config(sources, target_dir, ignore_patterns):
 
 
 def load_config(session_id: str = '') -> dict:
-    """Load config from SQLite. Falls back to JSON for legacy sessions."""
+    """Load config from SQLite."""
     sid = session_id or state.get('_session_id', '')
     if not sid:
-        legacy = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.merger_config.json')
-        try:
-            if os.path.isfile(legacy):
-                with open(legacy, 'r', encoding='utf-8') as f:
-                    return json.load(f)
-        except (OSError, json.JSONDecodeError):
-            pass
         return None
 
-    # Try SQLite first
+    # Try SQLite
     db_file = _db_path(sid)
     if os.path.isfile(db_file):
         try:
@@ -1459,20 +932,12 @@ def save_batch_resolutions(updates: list):
 
 
 def load_inventory_state(session_id: str = ''):
-    """Load saved inventory state — tries SQLite first, falls back to JSON."""
+    """Load saved inventory state from SQLite."""
     sid = session_id or state.get('_session_id', '')
     if not sid:
-        legacy = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.merger_state.json')
-        if os.path.isfile(legacy):
-            try:
-                with open(legacy, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                return _parse_inventory_json(data)
-            except (OSError, json.JSONDecodeError):
-                pass
         return None
 
-    # Try SQLite first
+    # Try SQLite
     db_file = _db_path(sid)
     if os.path.isfile(db_file):
         try:
@@ -1483,34 +948,6 @@ def load_inventory_state(session_id: str = ''):
         except sqlite3.Error as e:
             print(f"[WARNING] Failed to load inventory from SQLite: {e}")
 
-    # Fallback: legacy JSON
-    inv_path = os.path.join(_session_dir(sid), 'inventory.json')
-    try:
-        if os.path.isfile(inv_path):
-            with open(inv_path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-            inv = _parse_inventory_json(data)
-            # Migrate: save to SQLite for next time
-            if inv:
-                print(f"[INFO] Migrating JSON inventory to SQLite ({len(inv)} items)...")
-                old_inv = state.get('inventory')
-                state['inventory'] = inv  # Temporarily set for save
-                state['_session_id'] = sid
-                save_inventory_state(inv)
-                if old_inv is not None:
-                    state['inventory'] = old_inv
-            return inv
-    except json.JSONDecodeError as e:
-        print(f"[WARNING] JSON is corrupted: {e}")
-        print("[INFO] Attempting to salvage data from truncated JSON...")
-        inv = _repair_truncated_inventory_json(inv_path)
-        if inv:
-            print(f"[INFO] Salvaged {len(inv)} items! Migrating to SQLite...")
-            save_inventory_state(inv)
-            return inv
-        print("[WARNING] Could not salvage data. A re-scan is needed.")
-    except OSError as e:
-        print(f"[WARNING] Failed to load inventory: {e}")
     return None
 
 
@@ -1558,24 +995,6 @@ def _load_inventory_from_db(conn: sqlite3.Connection) -> dict:
     return inventory if inventory else None
 
 
-def _parse_inventory_json(data: dict) -> dict:
-    """Parse inventory JSON into MergeItem dict (legacy format)."""
-    inventory = {}
-    for entry in data.get('items', []):
-        versions = []
-        for vd in entry.get('versions', []):
-            versions.append(FileVersion(**vd))
-        item = MergeItem(
-            relative_path=entry['relative_path'],
-            versions=versions,
-            category=entry.get('category', ''),
-            selected_index=entry.get('selected_index', 0),
-            resolved=entry.get('resolved', False),
-        )
-        inventory[item.relative_path] = item
-    return inventory if inventory else None
-
-
 def _auto_save_state():
     """Save config and session meta. Does NOT re-save full inventory
     (individual resolve operations use save_item_resolution instead)."""
@@ -1616,12 +1035,6 @@ def delete_session(session_id: str):
         set_active_session('')
 
 
-# Legacy file paths (for migration)
-_LEGACY_CONFIG = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.merger_config.json')
-_LEGACY_STATE = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.merger_state.json')
-CONFIG_FILE = _LEGACY_CONFIG
-
-
 # ---------------------------------------------------------------------------
 # Flask Application
 # ---------------------------------------------------------------------------
@@ -1652,22 +1065,7 @@ def _restore_session():
     """Restore the active session on startup."""
     sid = get_active_session_id()
     if not sid:
-        # Try migrating legacy flat files
-        if os.path.isfile(_LEGACY_CONFIG) or os.path.isfile(_LEGACY_STATE):
-            print("[INFO] Migrating legacy session files to sessions/ folder...")
-            sid = _generate_session_id()
-            state['_session_id'] = sid
-            os.makedirs(_session_dir(sid), exist_ok=True)
-            # Move legacy files
-            for src, dst in [(_LEGACY_CONFIG, 'config.json'), (_LEGACY_STATE, 'inventory.json')]:
-                if os.path.isfile(src):
-                    try:
-                        shutil.copy2(src, os.path.join(_session_dir(sid), dst))
-                    except OSError:
-                        pass
-            set_active_session(sid)
-        else:
-            return
+        return
 
     state['_session_id'] = sid
     print(f"[INFO] Restoring session: {sid}")
@@ -1682,9 +1080,6 @@ def _restore_session():
         ip = cfg.get('ignore_patterns')
         if ip:
             state['ignore_patterns'] = set(ip)
-        pf = cfg.get('project_filter', '')
-        if pf:
-            state['_editor_history_project_filter'] = pf
         print(f"[INFO]   Config loaded: {len(state['sources'])} sources, target={state['target_dir']}")
 
     inv = load_inventory_state(sid)
@@ -1740,10 +1135,6 @@ def switch_session(session_id):
         ip = cfg.get('ignore_patterns')
         if ip:
             state['ignore_patterns'] = set(ip)
-        pf = cfg.get('project_filter', '')
-        if pf:
-            state['_editor_history_project_filter'] = pf
-
     inv = load_inventory_state(session_id)
     if inv:
         state['inventory'] = inv
@@ -1788,84 +1179,6 @@ def delete_session_route(session_id):
     return redirect(url_for('setup'))
 
 
-# ---------------------------------------------------------------------------
-# Editor History Extraction Routes
-# ---------------------------------------------------------------------------
-
-@app.route('/extract-history', methods=['GET', 'POST'])
-def extract_history():
-    """Page to extract files from Windsurf/VS Code/Cursor local history."""
-    extractor = EditorHistoryExtractor()
-    sources = extractor.find_history_sources()
-
-    if request.method == 'POST':
-        dest_dir = request.form.get('dest_dir', '').strip()
-        project_filter = request.form.get('project_filter', '').strip()
-        hours = int(request.form.get('hours', 120000))
-
-        if not dest_dir:
-            flash('Please specify a destination directory.', 'error')
-            return redirect(url_for('extract_history'))
-
-        # Run extraction in background
-        state['extract_status'] = 'running'
-        state['extract_result'] = None
-        progress_q = queue.Queue()
-        state['extract_queue'] = progress_q
-
-        def run_extraction():
-            ext = EditorHistoryExtractor(project_filter, progress_q)
-            result = ext.extract_all(dest_dir, project_filter, hours)
-            state['extract_result'] = result
-            state['extract_status'] = 'done'
-
-        thread = threading.Thread(target=run_extraction, daemon=True)
-        thread.start()
-        return redirect(url_for('extract_progress'))
-
-    return render_template('extract_history.html', sources=sources)
-
-
-@app.route('/extract-progress')
-def extract_progress():
-    return render_template('extract_progress.html')
-
-
-@app.route('/extract-events')
-def extract_events():
-    """SSE endpoint for extraction progress."""
-    def generate():
-        q = state.get('extract_queue')
-        if not q:
-            yield f"data: {json.dumps({'type': 'error', 'message': 'No extraction running'})}\n\n"
-            return
-
-        while True:
-            try:
-                msg = q.get(timeout=1)
-                if msg[0] == 'extract_done':
-                    yield f"data: {json.dumps({'type': 'done', 'result': msg[1]})}\n\n"
-                    return
-                elif msg[0] == 'info':
-                    yield f"data: {json.dumps({'type': 'info', 'message': msg[1]})}\n\n"
-                elif msg[0] == 'scanning_history':
-                    yield f"data: {json.dumps({'type': 'scanning', 'source': msg[1], 'count': msg[2]})}\n\n"
-                elif msg[0] == 'extract_progress':
-                    yield f"data: {json.dumps({'type': 'progress', 'scanned': msg[1], 'matched': msg[2]})}\n\n"
-                elif msg[0] == 'extract_copy_progress':
-                    yield f"data: {json.dumps({'type': 'copy_progress', 'done': msg[1], 'total': msg[2]})}\n\n"
-                elif msg[0] == 'error':
-                    yield f"data: {json.dumps({'type': 'error', 'message': msg[1]})}\n\n"
-            except queue.Empty:
-                if state.get('extract_status') == 'done':
-                    result = state.get('extract_result', {})
-                    yield f"data: {json.dumps({'type': 'done', 'result': result})}\n\n"
-                    return
-                yield f"data: {json.dumps({'type': 'heartbeat'})}\n\n"
-
-    return Response(stream_with_context(generate()), mimetype='text/event-stream')
-
-
 @app.route('/setup', methods=['GET', 'POST'])
 def setup():
     if request.method == 'POST':
@@ -1895,12 +1208,9 @@ def setup():
                 flash(f'Source directory not found: {src.path}', 'error')
                 return redirect(url_for('setup'))
 
-        project_filter = request.form.get('project_filter', '').strip()
-
         state['sources'] = sources
         state['target_dir'] = target
         state['ignore_patterns'] = ignore_set if ignore_set else DEFAULT_IGNORE.copy()
-        state['_editor_history_project_filter'] = project_filter
 
         # Create or reuse session
         if not state.get('_session_id'):
@@ -1942,8 +1252,7 @@ def setup():
         default_sources = [
             SourceConfig("Base Project", "", 0),
             SourceConfig("GitHub Repo", "", 1),
-            SourceConfig("Windsurf History", "", 2),
-            SourceConfig("Old Backup", "", 3),
+            SourceConfig("Old Backup", "", 2),
         ]
 
     ignore_str = ', '.join(sorted(state['ignore_patterns']))
@@ -1964,7 +1273,6 @@ def setup():
     return render_template('setup.html',
                            sources=default_sources,
                            target_dir=state.get('target_dir', ''),
-                           project_filter=state.get('_editor_history_project_filter', ''),
                            ignore_patterns=ignore_str,
                            has_saved_state=has_saved_state,
                            saved_stats=saved_stats,
@@ -2340,13 +1648,10 @@ def merge_events():
 @app.route('/log')
 def log_page():
     engine = state['engine']
-    suggestions = RecoveryAdvisor.get_suggestions(
-        [s.path for s in state.get('sources', []) if s.path]
-    )
     log_path = state.get('merge_log_path', '')
     return render_template('log.html',
                            log_entries=engine.log_entries[-200:],
-                           suggestions=suggestions,
+                           suggestions=[],
                            merge_result=state.get('merge_result'),
                            log_path=log_path)
 

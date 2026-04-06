@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-**Guanine (CodeEdit)** — A multi-source file recovery and merge tool with a Flask web UI. Scans directories and editor local history (Windsurf, VS Code, Cursor), identifies conflicts between file versions across multiple sources, and lets you review side-by-side diffs and merge into a target directory. Includes a companion PowerShell script for standalone history extraction.
+**Guanine (CodeEdit)** — A sandboxed coding agent review system and multi-source file merge tool with a Flask web UI. AI coding agents edit file copies in isolated workspaces; humans review changes through side-by-side diffs and hunk-level merge editing. Also supports general-purpose multi-source directory scanning, conflict detection, and merging.
 
 Stack: Python, Flask, SQLite, Jinja2, Bootstrap 5, pytest
 
@@ -51,11 +51,11 @@ the documentation rule for this file?" If the user agrees, use the
 
 - **File Scanner** (`file_merger.py` — `FileScanner` class) — Walks source directories, computes SHA-256 hashes, detects binary files, categorizes items as unique/identical/conflict
 - **Merge Engine** (`file_merger.py` — `MergeEngine` class) — Generates unified and side-by-side diffs, executes file copy/merge operations with skip-if-identical logic
-- **Editor History Extractor** (`file_merger.py` — `EditorHistoryExtractor` class) — Parses Windsurf/VS Code/Cursor local history directories (`entries.json`), resolves hashed backup files to original paths
 - **Session Persistence** (`file_merger.py` — SQLite layer) — Stores scan results, merge items, file versions, and coverage stats in per-session SQLite databases with WAL mode
 - **Flask Web UI** (`file_merger.py` — Flask routes + `templates/`) — Setup wizard, scan progress (SSE), inventory browser, conflict resolution, interactive merge editor, coverage dashboard
-- **PowerShell Recovery Script** (`restore_deleted_files.ps1`) — Standalone script for finding and restoring files from editor history without the web UI
-- **HTML Templates** (`templates/`) — 14 Jinja2 templates: setup, browse, inventory, conflicts, conflict detail, merge editor, coverage, extraction, progress pages
+- **Agent Review System** (`agent_schema.py`, `agent_tools.py`, `agent_workflow.py`, `agent_review.py`) — Sandboxed agent workspaces, tool exposure via Python/MCP, review bridge to merge UI
+- **MCP Server** (`agent_mcp_server.py`) — Model Context Protocol server for external agent integration
+- **HTML Templates** (`templates/`) — Jinja2 templates for merge UI and agent review pages
 
 ## Directory Layout
 
@@ -75,8 +75,13 @@ Guanine(CodeEdit)/
 │   └── tests/
 │       ├── <feature>-test-plan.md         <- Active test plans
 │       └── history/                       <- Archived completed plans
-├── file_merger.py                         <- Main application (~2,860 lines, monolithic)
-├── templates/                             <- Jinja2 HTML templates (14 files)
+├── file_merger.py                         <- Core merge app (~2,170 lines)
+├── agent_schema.py                        <- Agent session SQLite schema + CRUD
+├── agent_tools.py                         <- Agent tool functions (single source of truth)
+├── agent_workflow.py                      <- Workflow builder, tracked writes, tool registry
+├── agent_review.py                        <- Flask Blueprint for agent UI + review bridge
+├── agent_mcp_server.py                    <- MCP server wrapping agent tools
+├── templates/                             <- Jinja2 HTML templates
 │   ├── base.html                          <- Base layout (Bootstrap 5 dark theme)
 │   ├── setup.html                         <- Source/target configuration + session management
 │   ├── browse.html                        <- Split-pane file browser
@@ -85,15 +90,19 @@ Guanine(CodeEdit)/
 │   ├── conflict_detail.html               <- Single conflict with diff viewer
 │   ├── merge_editor.html                  <- Interactive hunk-by-hunk merge editor
 │   ├── coverage.html                      <- Per-source coverage stats
-│   ├── extract_history.html               <- Editor history extraction setup
-│   ├── extract_progress.html              <- Extraction progress (SSE)
 │   ├── scan_progress.html                 <- Scan progress (SSE)
 │   ├── merge_progress.html                <- Merge progress (SSE)
-│   ├── log.html                           <- Activity log + recovery suggestions
-│   └── _file_detail.html                  <- File detail partial (AJAX loaded)
-├── restore_deleted_files.ps1              <- PowerShell companion script
-├── commands.txt                           <- Session resume notes
-└── sessions/                              <- Runtime data (SQLite DBs per session)
+│   ├── log.html                           <- Activity log
+│   ├── _file_detail.html                  <- File detail partial (AJAX loaded)
+│   ├── agent_repos.html                   <- Repo registration
+│   ├── agent_sessions.html                <- Agent session dashboard
+│   ├── agent_session_detail.html          <- Session detail + actions
+│   ├── agent_conversation.html            <- Agent conversation viewer
+│   └── agent_combined_diff.html           <- Multi-agent combined diff
+├── agentic/                               <- Lightweight AI workflow engine
+│   ├── engine/                            <- Runner, loop, OpenRouter client, knowledge
+│   └── tools/                             <- Sandboxed filesystem tools
+└── sessions/                              <- Runtime data (SQLite DBs per session + agent workspaces)
 ```
 
 ## Key Conventions
@@ -124,14 +133,15 @@ Read `.claude/rules/invariants.md` for the full list with file references.
 7. MergeEngine.execute_merge() copies selected versions to target, skipping identical
 ```
 
-### Editor History Extraction Flow (touches: `EditorHistoryExtractor` → filesystem)
+### Agent Review Flow (touches: `agent_schema.py` → `agent_tools.py` → `agent_review.py` → merge UI)
 
 ```
-1. Extractor scans known editor history paths (Windsurf, VS Code, Cursor)
-2. Parses entries.json in each hashed subdirectory to recover original file paths
-3. Resolves backup files via 3 methods: entry.id, entry.source URI, newest file
-4. Filters by project folder and time window
-5. Copies files to destination preserving original directory structure
+1. User registers a repo and creates an agent session (workspace is provisioned)
+2. Agent checks out files, edits in workspace via tools (Python import or MCP)
+3. Agent signals done — diff stats are computed for all modified files
+4. User clicks "Review Changes" — review bridge creates MergeItem/FileVersion pairs
+5. User reviews via existing merge UI (hunk-level accept/reject/edit)
+6. Accepted changes are copied back to the original repo
 ```
 
 ## Testing Protocol
@@ -148,17 +158,16 @@ When writing or executing tests, **read `.claude/rules/testing.md` first**. Key 
 
 - **No `.env` file** — the app uses hardcoded defaults (port 5000, Flask secret key in source)
 - **Session storage** — `sessions/` directory alongside `file_merger.py`, each session gets its own SQLite DB
-- **Editor history paths** — hardcoded in `EditorHistoryExtractor.EDITOR_HISTORY_PATHS` for Windows (Windsurf, VS Code, Cursor)
 - **Ignore patterns** — `DEFAULT_IGNORE` set in source (`.git`, `__pycache__`, `node_modules`, etc.)
 
 ## General Coding Guidelines
 
 - Python 3.8+ with type hints (uses `dataclasses`, `typing.Optional`, `pathlib.Path`)
-- Single-file architecture — all Python code lives in `file_merger.py`
+- Core merge logic in `file_merger.py`; agent system in separate modules (`agent_*.py`)
 - Use `dataclass` for data models (`FileVersion`, `MergeItem`, `SourceConfig`)
 - Thread safety: SQLite connections are thread-local (`threading.local()`), use WAL mode
 - Long path support on Windows (`\\?\` prefix for paths > 250 chars)
-- SSE (Server-Sent Events) for real-time progress on scan/merge/extraction operations
+- SSE (Server-Sent Events) for real-time progress on scan/merge operations
 - Only modify code within the scope of the current request
 - Always check for existing functions before creating new ones
 
@@ -168,13 +177,59 @@ When working on any bug fix, read `.claude/rules/bug-fixing.md` first.
 Key points:
 - Root-cause analysis before fixing
 - Check if the bug violates a design invariant (especially file safety and session persistence)
-- Test with multiple source directories and editor history formats
+- Test with multiple source directories
 - Verify SQLite persistence survives app restart
+
+## Sandboxed Editing Workflow
+
+A PreToolUse hook enforces sandboxed editing when `.claude/sandbox-active` exists. When active, ALL Edit/Write operations on project files are blocked unless the file is under `sessions/` (agent workspace).
+
+### How to make changes (when sandbox is ON)
+
+1. **Create a session** (or reuse the current one):
+   ```
+   mcp__guanine__create_session(repo_id="<REPO_ID>", task_description="what you're doing")
+   ```
+   Returns `session_id` and `workspace_path`. **Remember the workspace_path.**
+
+2. **Checkout files** you need to edit:
+   ```
+   mcp__guanine__checkout_file(path="relative/path/to/file.py")
+   ```
+   Returns `workspace_file_path` — the absolute path to use with Edit/Write.
+
+3. **Edit files in the workspace** using native Edit/Write tools with absolute workspace paths.
+
+4. **Read repo files** for context — use Read tool directly on any project file. No checkout needed for reading.
+
+5. **Create new files** — Write them into the workspace at the appropriate relative path. Detected automatically when you signal done.
+
+6. **Signal completion**:
+   ```
+   mcp__guanine__signal_done(summary="What I changed and why")
+   ```
+
+7. User reviews changes at http://localhost:5000/agent/sessions
+
+### Toggle Commands
+
+The sandbox is controlled by the `.claude/sandbox-active` flag file:
+
+- **"turn off sandbox"** / **"sandbox off"**: Run `rm .claude/sandbox-active`. All subsequent edits go direct.
+- **"turn sandbox on"** / **"sandbox on"**: Run `touch .claude/sandbox-active`. Edits are sandboxed again.
+- **"edit this directly"**: Run `rm .claude/sandbox-active`, make the edit, then `touch .claude/sandbox-active`.
+
+### Important Details
+
+- **Repo ID**: Pre-registered. Call `mcp__guanine__list_repos()` to find it.
+- **One session per task**: Create a new session for each distinct task. Reuse if continuing the same task.
+- **After compaction**: The SessionStart hook re-injects workspace path and sandbox status. Call `mcp__guanine__get_workspace_info()` if needed.
+- **Bash is unrestricted**: You can run git, python, pytest, etc. Do NOT use Bash to write files outside `sessions/` when sandbox is active.
 
 ## Environment Notes
 
 - Developed on: Windows 11
-- Shell syntax: PowerShell
+- Shell syntax: PowerShell / bash (Git Bash)
 - Package manager: pip
-- Python dependencies: `flask` (+ `markupsafe`), stdlib only otherwise
+- Python dependencies: `flask` (+ `markupsafe`), `mcp` (optional, for MCP server), stdlib otherwise
 - Run with: `python file_merger.py` → http://localhost:5000

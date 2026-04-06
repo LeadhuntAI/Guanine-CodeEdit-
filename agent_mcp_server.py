@@ -59,14 +59,45 @@ def _require_session() -> tuple[dict, dict]:
     """Return (session, repo) or raise."""
     if _active_session is None or _active_repo is None:
         raise ValueError(
-            "No active session. Call activate_session first."
+            "No active session. Call activate_session or create_session first."
         )
     return _active_session, _active_repo
+
+
+def _auto_resume():
+    """Auto-activate the most recent running session on startup."""
+    global _active_session, _active_repo
+    try:
+        sessions = agent_schema.list_sessions(status='running')
+        if sessions:
+            s = sessions[0]
+            _active_session = agent_schema.get_session(s['session_id'])
+            if _active_session:
+                _active_repo = agent_schema.get_repo(_active_session['repo_id'])
+    except Exception:
+        pass
+
+_auto_resume()
 
 
 # ---------------------------------------------------------------------------
 # Session management tools
 # ---------------------------------------------------------------------------
+
+@mcp.tool()
+def get_workspace_info() -> str:
+    """Get the current session's workspace path and status.
+    Use this after context compaction to recover the workspace path."""
+    session, repo = _require_session()
+    return json.dumps({
+        "session_id": session["session_id"],
+        "workspace_path": session["workspace_path"],
+        "repo_id": repo["repo_id"],
+        "repo_path": repo["repo_path"],
+        "status": session["status"],
+        "task_description": session["task_description"],
+    }, indent=2)
+
 
 @mcp.tool()
 def list_repos() -> str:

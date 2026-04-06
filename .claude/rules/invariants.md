@@ -13,10 +13,10 @@ Violating any of these is a bug, regardless of whether tests pass.
 
 ## 1. No Silent File Destruction
 
-Never delete or overwrite user files without explicit confirmation. The merge engine must skip files that already exist at the target with identical content (hash comparison), and all overwrites require explicit user action (e.g., clicking "resolve", confirming merge, or using `-Force` flag in PowerShell).
+Never delete or overwrite user files without explicit confirmation. The merge engine must skip files that already exist at the target with identical content (hash comparison), and all overwrites require explicit user action (e.g., clicking "resolve", confirming merge).
 
-- **Why**: This is a file recovery tool — silently destroying the files users are trying to recover would be catastrophic and defeat the entire purpose of the tool.
-- **Files**: `file_merger.py` — `MergeEngine.execute_merge()` (checks `existing_hash == version.sha256` before skipping), Flask route `/execute` (requires POST), `/resolve` (requires explicit selection), `restore_deleted_files.ps1` (requires `-Force` flag and `J/N` confirmation prompt)
+- **Why**: This is a code review tool — silently destroying files would be catastrophic and defeat the entire purpose of the tool.
+- **Files**: `file_merger.py` — `MergeEngine.execute_merge()` (checks `existing_hash == version.sha256` before skipping), Flask route `/execute` (requires POST), `/resolve` (requires explicit selection), `agent_review.py` — merge-back route requires explicit accept
 
 ## 2. Session Data Must Always Be Persisted to SQLite
 
