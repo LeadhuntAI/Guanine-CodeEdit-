@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block title %}Conflicts - File Recovery Merger{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h2>Conflict Resolution</h2>
+        <p class="text-muted mb-0">{{ resolved }} of {{ total }} conflicts resolved</p>
+    </div>
+    <div>
+        <form method="POST" action="/resolve-all-latest" class="d-inline">
+            <button type="submit" class="btn btn-warning" onclick="return confirm('Auto-resolve all remaining conflicts by selecting the latest version?')">
+                Auto-resolve All (Use Latest)
+            </button>
+        </form>
+    </div>
+</div>
+
+<!-- Progress bar -->
+<div class="progress mb-4" style="height: 8px;">
+    <div class="progress-bar bg-success" style="width: {{ (resolved / total * 100) if total > 0 else 0 }}%"></div>
+</div>
+
+<div class="card">
+    <div class="table-responsive">
+        <table class="table table-dark table-hover table-sm mb-0">
+            <thead>
+                <tr>
+                    <th style="width: 30px;">#</th>
+                    <th style="width: 80px;">Status</th>
+                    <th>Path</th>
+                    <th style="width: 80px;">Versions</th>
+                    <th style="width: 200px;">Sources</th>
+                    <th style="width: 120px;">Selected</th>
+                    <th style="width: 80px;">Action</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in items %}
+                <tr class="{{ 'table-active' if item.resolved }}">
+                    <td>{{ item.index + 1 }}</td>
+                    <td>
+                        {% if item.resolved %}
+                        <span class="badge bg-success">Done</span>
+                        {% else %}
+                        <span class="badge bg-warning text-dark">Pending</span>
+                        {% endif %}
+                    </td>
+                    <td class="file-path text-truncate" style="max-width: 350px;" title="{{ item.relative_path }}">{{ item.relative_path }}</td>
+                    <td class="text-center">{{ item.num_versions }}</td>
+                    <td><small>{{ item.source_names }}</small></td>
+                    <td><small>{{ item.selected_source }}</small></td>
+                    <td>
+                        <a href="/conflict/{{ item.relative_path }}" class="btn btn-sm btn-{{ 'outline-secondary' if item.resolved else 'warning' }}">
+                            {{ 'Edit' if item.resolved else 'Review' }}
+                        </a>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+{% if total > 0 and resolved == total %}
+<div class="text-center mt-4">
+    <div class="alert alert-success">
+        All conflicts resolved! You can now execute the merge.
+    </div>
+    <form method="POST" action="/execute">
+        <input type="hidden" name="mode" value="all">
+        <button type="submit" class="btn btn-primary btn-lg" onclick="return confirm('Execute merge for all resolved files?')">
+            Execute Full Merge
+        </button>
+    </form>
+</div>
+{% endif %}
+{% endblock %}

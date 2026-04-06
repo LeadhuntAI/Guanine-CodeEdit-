@@ -1,0 +1,44 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+
+      - name: Set up Python ${{ matrix.python-version }}
+        run: uv python install ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: uv sync --group dev --extra watch
+
+      - name: Run tests
+        run: uv run pytest tests/ -v --tb=short --cov=src --cov-report=term-missing
+
+      - name: Verify sdist contains no sensitive paths
+        if: runner.os == 'Linux'
+        run: |
+          uv build --sdist
+          SDIST=$(ls dist/*.tar.gz | head -1)
+          echo "Checking $SDIST for sensitive paths..."
+          FOUND=$(tar -tzf "$SDIST" | grep -E '(\.claude|\.env|\.pypirc|\.aws|\.ssh|id_rsa|id_ed25519|\.pem|\.key|credentials)' || true)
+          if [ -n "$FOUND" ]; then
+            echo "ERROR: Sensitive paths found in sdist:"
+            echo "$FOUND"
+            exit 1
+          fi
+          echo "OK: No sensitive paths found in sdist."

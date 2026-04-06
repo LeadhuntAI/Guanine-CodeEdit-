@@ -1,0 +1,267 @@
+{% extends "base.html" %}
+{% block title %}Combined Diff: {{ filepath }}{% endblock %}
+
+{% block extra_css %}
+<style>
+    .combined-view { font-family: 'Cascadia Code', 'Consolas', monospace; font-size: 0.82rem; }
+    .combined-line { display: flex; border-bottom: 1px solid rgba(255,255,255,0.03); min-height: 22px; }
+    .combined-line:hover { background: rgba(255,255,255,0.03); }
+    .line-num { width: 50px; min-width: 50px; text-align: right; padding: 1px 8px 1px 4px; color: #555; user-select: none; border-right: 1px solid #333; flex-shrink: 0; }
+    .line-content { padding: 1px 8px; white-space: pre-wrap; word-break: break-all; flex: 1; }
+    .line-agent-tag { width: 20px; min-width: 20px; text-align: center; font-weight: 700; font-size: 0.75rem; flex-shrink: 0; border-right: 1px solid #333; }
+
+    /* Equal lines */
+    .hunk-equal .line-content { color: #888; }
+    .hunk-equal.collapsed { max-height: 66px; overflow: hidden; position: relative; cursor: pointer; }
+    .hunk-equal.collapsed::after { content: 'click to expand'; position: absolute; bottom: 0; left: 0; right: 0; height: 30px; background: linear-gradient(transparent, var(--bs-body-bg)); text-align: center; padding-top: 10px; color: #666; font-size: 0.75rem; }
+
+    /* Agent change (non-overlapping) */
+    .line-removed { text-decoration: line-through; opacity: 0.6; }
+
+    /* Conflict zone */
+    .conflict-zone { border: 2px solid #dc3545; border-radius: 6px; margin: 4px 0; overflow: hidden; }
+    .conflict-header { background: rgba(220,53,69,0.2); padding: 4px 12px; font-size: 0.8rem; color: #f87171; display: flex; justify-content: space-between; align-items: center; }
+    .conflict-agent-section { border-top: 1px solid rgba(255,255,255,0.1); }
+    .conflict-agent-label { padding: 2px 12px; font-size: 0.75rem; font-weight: 600; }
+    .conflict-actions { display: flex; gap: 4px; }
+    .conflict-actions .btn { font-size: 0.75rem; padding: 2px 8px; }
+
+    /* Agent legend */
+    .agent-legend { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 12px; }
+    .agent-chip { display: flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 6px; font-size: 0.85rem; }
+    .agent-dot { width: 10px; height: 10px; border-radius: 50%; }
+
+    /* Pairwise diff */
+    .pairwise-diff { max-height: 500px; overflow-y: auto; font-family: monospace; font-size: 0.82rem; background: #1a1d21; border-radius: 6px; padding: 8px; }
+    .pairwise-diff .diff-add { color: #86efac; }
+    .pairwise-diff .diff-del { color: #fca5a5; }
+    .pairwise-diff .diff-hdr { color: #93c5fd; font-weight: bold; }
+
+    /* Resolve controls */
+    .resolve-bar { position: sticky; top: 0; z-index: 10; background: var(--bs-body-bg); padding: 8px 0; border-bottom: 1px solid #333; }
+    .resolve-bar .btn-sm { font-size: 0.8rem; }
+
+    /* Hunk pick indicators */
+    .pick-indicator { display: inline-block; width: 18px; height: 18px; border-radius: 3px; text-align: center; line-height: 18px; font-size: 0.7rem; font-weight: 700; }
+    .pick-accepted { background: #198754; color: white; }
+    .pick-rejected { background: #dc3545; color: white; }
+    .pick-pending { background: #333; color: #666; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-start mb-2">
+    <div>
+        <h4 class="file-path mb-1">{{ filepath }}</h4>
+        <div class="text-muted">
+            Combined view: {{ diff_data.agents | length }} agent versions
+            {% if diff_data.has_conflicts %}
+            <span class="badge bg-danger ms-2">Has Conflicts</span>
+            {% else %}
+            <span class="badge bg-success ms-2">No Conflicts</span>
+            {% endif %}
+        </div>
+    </div>
+    <div>
+        <a href="{{ url_for('agent.sessions') }}" class="btn btn-outline-secondary btn-sm">Back to Sessions</a>
+    </div>
+</div>
+
+<!-- Agent Legend -->
+<div class="agent-legend">
+    {% for agent in diff_data.agents %}
+    <div class="agent-chip" style="background: {{ agent.color.bg }}; border: 1px solid {{ agent.color.border }};">
+        <span class="agent-dot" style="background: {{ agent.color.border }};"></span>
+        <span style="color: {{ agent.color.text }};">{{ agent.name }}</span>
+    </div>
+    {% endfor %}
+</div>
+
+<!-- Tab navigation -->
+<ul class="nav nav-tabs mb-3" role="tablist">
+    <li class="nav-item">
+        <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#combined-tab" type="button">Combined View</button>
+    </li>
+    {% for pw in pairwise_data %}
+    <li class="nav-item">
+        <button class="nav-link" data-bs-toggle="tab" data-bs-target="#pair-{{ loop.index }}" type="button">
+            {{ pw.agent_name[:25] }}
+            <span class="badge bg-success">+{{ pw.added }}</span>
+            <span class="badge bg-danger">-{{ pw.removed }}</span>
+        </button>
+    </li>
+    {% endfor %}
+</ul>
+
+<div class="tab-content">
+    <!-- Combined View Tab -->
+    <div class="tab-pane fade show active" id="combined-tab">
+        {% if diff_data.has_conflicts %}
+        <div class="resolve-bar mb-2">
+            <span class="text-muted me-3">Conflict resolution:</span>
+            <span id="resolve-status" class="me-3">0 / <span id="total-conflicts">0</span> resolved</span>
+        </div>
+        {% endif %}
+
+        <div class="combined-view" id="combined-diff">
+            {% for hunk in diff_data.hunks %}
+
+            {% if hunk.type == 'equal' %}
+            <!-- Equal block -->
+            <div class="hunk-equal {% if hunk.lines | length > 6 %}collapsed{% endif %}" onclick="this.classList.toggle('collapsed')">
+                {% for line in hunk.lines %}
+                <div class="combined-line">
+                    <div class="line-num">{{ hunk.start_line + loop.index0 }}</div>
+                    <div class="line-agent-tag"></div>
+                    <div class="line-content">{{ line }}</div>
+                </div>
+                {% endfor %}
+            </div>
+
+            {% elif hunk.type == 'agent_change' %}
+            <!-- Single agent change (auto-composed) -->
+            <div class="hunk-change" data-hunk-id="{{ hunk.id }}" style="border-left: 3px solid {{ hunk.color.border }};">
+                {% if hunk.original_lines %}
+                {% for line in hunk.original_lines %}
+                <div class="combined-line" style="background: rgba(220,53,69,0.08);">
+                    <div class="line-num" style="color: #dc3545;">{{ hunk.start_line + loop.index0 }}</div>
+                    <div class="line-agent-tag" style="color: {{ hunk.color.text }};">-</div>
+                    <div class="line-content line-removed" style="color: #fca5a5;">{{ line }}</div>
+                </div>
+                {% endfor %}
+                {% endif %}
+                {% for line in hunk.new_lines %}
+                <div class="combined-line" style="background: {{ hunk.color.bg }};">
+                    <div class="line-num" style="color: {{ hunk.color.text }};">+</div>
+                    <div class="line-agent-tag" style="color: {{ hunk.color.text }};" title="{{ hunk.agent_name }}">{{ hunk.agent_name[:1] | upper }}</div>
+                    <div class="line-content" style="color: {{ hunk.color.text }};">{{ line }}</div>
+                </div>
+                {% endfor %}
+            </div>
+
+            {% elif hunk.type == 'conflict' %}
+            <!-- Conflict zone: multiple agents changed same lines -->
+            <div class="conflict-zone" data-hunk-id="{{ hunk.id }}" data-conflict="true">
+                <div class="conflict-header">
+                    <span>CONFLICT: {{ hunk.agents | length }} agents edited lines {{ hunk.start_line }}-{{ hunk.start_line + hunk.original_lines | length - 1 }}</span>
+                    <div class="conflict-actions">
+                        <span class="pick-indicator pick-pending" id="pick-{{ hunk.id }}">?</span>
+                    </div>
+                </div>
+                <!-- Original lines -->
+                <div class="conflict-agent-section">
+                    <div class="conflict-agent-label text-muted">Original</div>
+                    {% for line in hunk.original_lines %}
+                    <div class="combined-line" style="background: rgba(255,255,255,0.03);">
+                        <div class="line-num">{{ hunk.start_line + loop.index0 }}</div>
+                        <div class="line-agent-tag"></div>
+                        <div class="line-content" style="color: #888;">{{ line }}</div>
+                    </div>
+                    {% endfor %}
+                </div>
+                <!-- Each agent's version -->
+                {% for agent_idx_str, agent_data in hunk.agents.items() %}
+                <div class="conflict-agent-section" data-agent-idx="{{ agent_idx_str }}">
+                    <div class="conflict-agent-label" style="color: {{ agent_data.color.text }}; background: {{ agent_data.color.bg }};">
+                        {{ agent_data.name }}
+                        <button class="btn btn-sm btn-outline-light ms-2 pick-btn" onclick="pickConflict({{ hunk.id }}, {{ agent_idx_str }})">Use This</button>
+                    </div>
+                    {% for change in agent_data.changes %}
+                    {% for line in change.lines %}
+                    <div class="combined-line" style="background: {{ agent_data.color.bg }};">
+                        <div class="line-num" style="color: {{ agent_data.color.text }};">+</div>
+                        <div class="line-agent-tag" style="color: {{ agent_data.color.text }};">{{ agent_data.name[:1] | upper }}</div>
+                        <div class="line-content" style="color: {{ agent_data.color.text }};">{{ line }}</div>
+                    </div>
+                    {% endfor %}
+                    {% endfor %}
+                </div>
+                {% endfor %}
+                <!-- Manual edit option -->
+                <div class="conflict-agent-section">
+                    <div class="conflict-agent-label text-muted">
+                        <button class="btn btn-sm btn-outline-secondary" onclick="editConflict({{ hunk.id }})">Edit Manually</button>
+                        <button class="btn btn-sm btn-outline-warning ms-1" onclick="pickConflict({{ hunk.id }}, -1)">Keep Original</button>
+                    </div>
+                    <textarea class="form-control font-monospace d-none" id="edit-{{ hunk.id }}" rows="4" style="font-size: 0.82rem; background: #1a1d21; border-color: #333;"></textarea>
+                </div>
+            </div>
+            {% endif %}
+
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- Pairwise tabs -->
+    {% for pw in pairwise_data %}
+    <div class="tab-pane fade" id="pair-{{ loop.index }}">
+        <h5 class="mb-2">Original vs {{ pw.agent_name }}</h5>
+        <div class="pairwise-diff">
+            {% for line in pw.diff_lines %}
+            <div class="{% if line.startswith('+++') or line.startswith('---') %}diff-hdr{% elif line.startswith('+') %}diff-add{% elif line.startswith('-') %}diff-del{% elif line.startswith('@@') %}diff-hdr{% endif %}">{{ line }}</div>
+            {% endfor %}
+            {% if not pw.diff_lines %}
+            <div class="text-muted p-3">No differences.</div>
+            {% endif %}
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// Conflict resolution state
+const picks = {};
+const totalConflicts = document.querySelectorAll('[data-conflict="true"]').length;
+document.getElementById('total-conflicts').textContent = totalConflicts;
+
+function pickConflict(hunkId, agentIdx) {
+    picks[hunkId] = agentIdx;
+    const indicator = document.getElementById('pick-' + hunkId);
+    if (agentIdx === -1) {
+        indicator.className = 'pick-indicator pick-accepted';
+        indicator.textContent = 'O';
+        indicator.title = 'Keeping original';
+    } else {
+        indicator.className = 'pick-indicator pick-accepted';
+        indicator.textContent = (agentIdx + 1).toString();
+        indicator.title = 'Using agent ' + (agentIdx + 1);
+    }
+
+    // Highlight the chosen section
+    const zone = document.querySelector(`[data-hunk-id="${hunkId}"][data-conflict="true"]`);
+    if (zone) {
+        zone.querySelectorAll('.conflict-agent-section').forEach(s => {
+            s.style.opacity = '0.4';
+        });
+        if (agentIdx >= 0) {
+            const chosen = zone.querySelector(`[data-agent-idx="${agentIdx}"]`);
+            if (chosen) chosen.style.opacity = '1';
+        }
+    }
+
+    updateResolveStatus();
+}
+
+function editConflict(hunkId) {
+    const textarea = document.getElementById('edit-' + hunkId);
+    textarea.classList.toggle('d-none');
+    if (!textarea.classList.contains('d-none')) {
+        textarea.focus();
+        picks[hunkId] = 'manual';
+        const indicator = document.getElementById('pick-' + hunkId);
+        indicator.className = 'pick-indicator pick-accepted';
+        indicator.textContent = 'E';
+        indicator.title = 'Manual edit';
+        updateResolveStatus();
+    }
+}
+
+function updateResolveStatus() {
+    const resolved = Object.keys(picks).length;
+    document.getElementById('resolve-status').innerHTML =
+        resolved + ' / ' + totalConflicts + ' resolved';
+}
+</script>
+{% endblock %}

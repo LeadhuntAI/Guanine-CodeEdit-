@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+{% block title %}Scanning... - File Recovery Merger{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-lg-8">
+        <div class="card">
+            <div class="card-body text-center py-5">
+                <h3 id="statusTitle">Scanning sources...</h3>
+                <p class="text-muted" id="statusDetail">Initializing...</p>
+
+                <div class="progress mb-4" style="height: 24px;">
+                    <div class="progress-bar progress-bar-striped progress-bar-animated" id="progressBar"
+                         role="progressbar" style="width: 0%">0%</div>
+                </div>
+
+                <div id="sourceProgress" class="text-start mb-4"></div>
+
+                <div id="errorLog" class="text-start text-danger small" style="max-height: 200px; overflow-y: auto;"></div>
+
+                <div id="doneSection" style="display: none;" class="mt-4">
+                    <div class="row g-3 mb-4" id="statsRow"></div>
+                    <a href="/inventory" class="btn btn-primary btn-lg">View Inventory</a>
+                    <a href="/conflicts" class="btn btn-warning btn-lg ms-2">Review Conflicts</a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+const evtSource = new EventSource('/scan-events');
+const progressBar = document.getElementById('progressBar');
+const statusTitle = document.getElementById('statusTitle');
+const statusDetail = document.getElementById('statusDetail');
+const sourceProgress = document.getElementById('sourceProgress');
+const errorLog = document.getElementById('errorLog');
+const doneSection = document.getElementById('doneSection');
+const statsRow = document.getElementById('statsRow');
+
+let totalFiles = 0;
+
+evtSource.onmessage = function(event) {
+    const data = JSON.parse(event.data);
+
+    switch (data.type) {
+        case 'total':
+            totalFiles = data.count;
+            statusDetail.textContent = `Found ${totalFiles} files to scan...`;
+            break;
+
+        case 'scanning':
+            statusDetail.textContent = `Scanning: ${data.source}...`;
+            break;
+
+        case 'source_count':
+            sourceProgress.innerHTML += `<div class="mb-1"><span class="badge bg-info">${data.source}</span> ${data.count} files found</div>`;
+            break;
+
+        case 'source_done':
+            sourceProgress.innerHTML += `<div class="mb-1"><span class="badge bg-success">${data.source}</span> ${data.count} files scanned</div>`;
+            break;
+
+        case 'progress':
+            if (totalFiles > 0) {
+                const pct = Math.round((data.done / totalFiles) * 100);
+                progressBar.style.width = pct + '%';
+                progressBar.textContent = `${pct}% (${data.done}/${totalFiles})`;
+            }
+            break;
+
+        case 'error':
+            errorLog.innerHTML += `<div>${data.message}</div>`;
+            break;
+
+        case 'done':
+            evtSource.close();
+            progressBar.style.width = '100%';
+            progressBar.textContent = '100%';
+            progressBar.classList.remove('progress-bar-animated');
+            progressBar.classList.add('bg-success');
+            statusTitle.textContent = 'Scan Complete!';
+            statusDetail.textContent = `${data.stats.total} unique files found across all sources.`;
+
+            const stats = data.stats;
+            statsRow.innerHTML = `
+                <div class="col-md-3"><div class="stat-card bg-dark border"><div class="number">${stats.total}</div><div class="label">Total Files</div></div></div>
+                <div class="col-md-3"><div class="stat-card bg-dark border border-success"><div class="number text-success">${stats.auto_merge}</div><div class="label">Auto-Merge</div></div></div>
+                <div class="col-md-3"><div class="stat-card bg-dark border border-warning"><div class="number text-warning">${stats.conflicts}</div><div class="label">Conflicts</div></div></div>
+                <div class="col-md-3"><div class="stat-card bg-dark border border-info"><div class="number text-info">${stats.auto_unique}</div><div class="label">Unique Files</div></div></div>
+            `;
+            doneSection.style.display = 'block';
+            break;
+    }
+};
+
+evtSource.onerror = function() {
+    evtSource.close();
+    statusTitle.textContent = 'Connection lost';
+    statusDetail.textContent = 'The scan may still be running. Refresh to check.';
+};
+</script>
+{% endblock %}

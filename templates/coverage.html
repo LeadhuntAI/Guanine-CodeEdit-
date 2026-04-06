@@ -1,0 +1,161 @@
+{% extends "base.html" %}
+{% block title %}Source Coverage - File Recovery Merger{% endblock %}
+
+{% block extra_css %}
+<style>
+    .coverage-bar { height: 24px; border-radius: 4px; overflow: hidden; background: #2a2d31; }
+    .coverage-bar .segment { height: 100%; float: left; transition: width 0.3s; }
+    .seg-unique { background: #20c997; }
+    .seg-identical { background: #0dcaf0; }
+    .seg-conflict-sel { background: #ffc107; }
+    .seg-conflict-nosel { background: #6c757d; }
+    .legend-dot { display: inline-block; width: 12px; height: 12px; border-radius: 2px; margin-right: 4px; vertical-align: middle; }
+    .file-list-panel { max-height: 400px; overflow-y: auto; font-size: 0.8rem; }
+    .file-list-panel .file-path { cursor: pointer; padding: 2px 6px; border-radius: 3px; }
+    .file-list-panel .file-path:hover { background: rgba(255,255,255,0.08); }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-lg-10">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h2 class="mb-0">Source Coverage Breakdown</h2>
+            <div class="d-flex gap-2">
+                <a href="/browse" class="btn btn-sm btn-outline-secondary">Browse</a>
+                <a href="/conflicts" class="btn btn-sm btn-outline-secondary">Conflicts</a>
+            </div>
+        </div>
+
+        <!-- Summary -->
+        <div class="row g-3 mb-4">
+            <div class="col-md-3">
+                <div class="stat-card bg-dark border">
+                    <div class="number">{{ stats.total }}</div>
+                    <div class="label">Total Files</div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="stat-card bg-dark border">
+                    <div class="number text-success">{{ stats.auto_merge }}</div>
+                    <div class="label">Auto-Merge</div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="stat-card bg-dark border">
+                    <div class="number text-warning">{{ stats.conflicts }}</div>
+                    <div class="label">Conflicts</div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="stat-card bg-dark border">
+                    <div class="number text-info">{{ stats.resolved }}</div>
+                    <div class="label">Resolved</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Legend -->
+        <div class="mb-3" style="font-size:0.85rem;">
+            <span class="legend-dot seg-unique"></span> Unique (only in this source)
+            <span class="ms-3 legend-dot seg-identical"></span> Identical across sources
+            <span class="ms-3 legend-dot seg-conflict-sel"></span> Conflict (selected)
+            <span class="ms-3 legend-dot seg-conflict-nosel"></span> Conflict (not selected)
+        </div>
+
+        <!-- Per-source cards -->
+        {% for src in coverage %}
+        <div class="card mb-3">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">{{ src.source_name }}</h5>
+                <span class="badge bg-secondary">{{ src.total_files }} files</span>
+            </div>
+            <div class="card-body">
+                <div class="row mb-2" style="font-size:0.85rem;">
+                    <div class="col-auto">
+                        <span class="legend-dot seg-unique"></span>
+                        <strong>{{ src.unique_files }}</strong> unique
+                    </div>
+                    <div class="col-auto">
+                        <span class="legend-dot seg-identical"></span>
+                        <strong>{{ src.identical_files }}</strong> identical
+                    </div>
+                    <div class="col-auto">
+                        <span class="legend-dot seg-conflict-sel"></span>
+                        <strong>{{ src.selected_files }}</strong> conflict (selected)
+                    </div>
+                    <div class="col-auto">
+                        <span class="legend-dot seg-conflict-nosel"></span>
+                        <strong>{{ src.conflict_files - src.selected_files }}</strong> conflict (not selected)
+                    </div>
+                </div>
+                {% set t = src.total_files if src.total_files > 0 else 1 %}
+                <div class="coverage-bar mb-2">
+                    <div class="segment seg-unique" style="width:{{ (src.unique_files / t * 100)|round(1) }}%"></div>
+                    <div class="segment seg-identical" style="width:{{ (src.identical_files / t * 100)|round(1) }}%"></div>
+                    <div class="segment seg-conflict-sel" style="width:{{ (src.selected_files / t * 100)|round(1) }}%"></div>
+                    <div class="segment seg-conflict-nosel" style="width:{{ ((src.conflict_files - src.selected_files) / t * 100)|round(1) }}%"></div>
+                </div>
+                <button class="btn btn-sm btn-outline-secondary" onclick="toggleFiles('{{ src.source_name }}')">
+                    Show Files
+                </button>
+                <div id="files_{{ src.source_name | replace(' ', '_') }}" class="file-list-panel mt-2" style="display:none;">
+                    <div class="text-muted">Loading...</div>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+
+        {% if not coverage %}
+        <div class="alert alert-info">No source data available. Run a scan first.</div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+const loadedSources = {};
+
+function toggleFiles(sourceName) {
+    const safeId = sourceName.replace(/ /g, '_');
+    const panel = document.getElementById('files_' + safeId);
+    if (panel.style.display === 'none') {
+        panel.style.display = 'block';
+        if (!loadedSources[sourceName]) {
+            loadFiles(sourceName, panel);
+        }
+    } else {
+        panel.style.display = 'none';
+    }
+}
+
+function loadFiles(sourceName, panel) {
+    fetch('/api/coverage-files/' + encodeURIComponent(sourceName))
+        .then(r => r.json())
+        .then(data => {
+            loadedSources[sourceName] = true;
+            let html = '';
+            const sections = [
+                {key: 'unique', label: 'Unique Files', cls: 'text-success'},
+                {key: 'identical', label: 'Identical Files', cls: 'text-info'},
+                {key: 'conflict_selected', label: 'Conflicts (Selected)', cls: 'text-warning'},
+                {key: 'conflict_not_selected', label: 'Conflicts (Not Selected)', cls: 'text-muted'},
+            ];
+            for (const sec of sections) {
+                const files = data[sec.key] || [];
+                if (files.length === 0) continue;
+                html += `<div class="mt-2 mb-1"><strong class="${sec.cls}">${sec.label} (${files.length})</strong></div>`;
+                for (const f of files) {
+                    html += `<div class="file-path" onclick="window.open('/conflict/${encodeURIComponent(f)}', '_blank')">${f}</div>`;
+                }
+            }
+            if (!html) html = '<div class="text-muted">No files.</div>';
+            panel.innerHTML = html;
+        })
+        .catch(err => {
+            panel.innerHTML = '<div class="text-danger">Error loading files: ' + err + '</div>';
+        });
+}
+</script>
+{% endblock %}

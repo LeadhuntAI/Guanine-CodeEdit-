@@ -1,0 +1,126 @@
+{% extends "base.html" %}
+{% block title %}Log - File Recovery Merger{% endblock %}
+
+{% block content %}
+<div class="row">
+    <!-- Merge Result -->
+    {% if merge_result %}
+    <div class="col-12 mb-4">
+        <div class="card border-success">
+            <div class="card-header bg-success text-white">
+                <h5 class="mb-0">Merge Result</h5>
+            </div>
+            <div class="card-body">
+                <div class="row g-3 text-center">
+                    <div class="col-md-3">
+                        <div class="stat-card bg-dark border border-success">
+                            <div class="number text-success">{{ merge_result.copied }}</div>
+                            <div class="label">Files Copied</div>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="stat-card bg-dark border border-danger">
+                            <div class="number text-danger">{{ merge_result.errors }}</div>
+                            <div class="label">Errors</div>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="stat-card bg-dark border">
+                            <div class="number">{{ merge_result.total }}</div>
+                            <div class="label">Total Files</div>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="stat-card bg-dark border border-warning">
+                            <div class="number text-warning">{{ merge_result.skipped }}</div>
+                            <div class="label">Skipped</div>
+                        </div>
+                    </div>
+                </div>
+                {% if log_path %}
+                <p class="text-muted mt-3 mb-0 small">Log saved to: <code>{{ log_path }}</code></p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Action Log -->
+    <div class="col-lg-7 mb-4">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">Action Log</h5>
+                <a href="/export-log" class="btn btn-sm btn-outline-primary">Export JSON</a>
+            </div>
+            <div class="card-body p-0">
+                <div style="max-height: 500px; overflow-y: auto;">
+                    <table class="table table-dark table-sm table-hover mb-0">
+                        <thead>
+                            <tr>
+                                <th style="width: 170px;">Timestamp</th>
+                                <th style="width: 120px;">Action</th>
+                                <th>Path</th>
+                                <th style="width: 120px;">Source</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for entry in log_entries|reverse %}
+                            <tr>
+                                <td><small>{{ entry.timestamp[:19] }}</small></td>
+                                <td>
+                                    {% if entry.action == 'copied' %}
+                                    <span class="badge bg-success">{{ entry.action }}</span>
+                                    {% elif entry.action == 'error' %}
+                                    <span class="badge bg-danger">{{ entry.action }}</span>
+                                    {% elif entry.action == 'resolved' %}
+                                    <span class="badge bg-primary">{{ entry.action }}</span>
+                                    {% else %}
+                                    <span class="badge bg-secondary">{{ entry.action }}</span>
+                                    {% endif %}
+                                </td>
+                                <td class="file-path text-truncate" style="max-width: 300px;" title="{{ entry.path }}">{{ entry.path }}</td>
+                                <td><small>{{ entry.source }}</small></td>
+                            </tr>
+                            {% endfor %}
+                            {% if not log_entries %}
+                            <tr><td colspan="4" class="text-center text-muted py-3">No log entries yet.</td></tr>
+                            {% endif %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Recovery Suggestions -->
+    <div class="col-lg-5 mb-4">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">Additional Recovery Suggestions</h5>
+            </div>
+            <div class="card-body">
+                {% if not suggestions %}
+                <p class="text-muted">Run a scan first to get recovery suggestions.</p>
+                {% endif %}
+                {% for s in suggestions %}
+                <div class="mb-3 p-3 border rounded">
+                    <h6>
+                        {% if s.type == 'git_reflog' or s.type == 'git_fsck' or s.type == 'git_stash' %}
+                        <span class="badge bg-warning text-dark me-1">!</span>
+                        {% else %}
+                        <span class="badge bg-info me-1">i</span>
+                        {% endif %}
+                        {{ s.title }}
+                    </h6>
+                    <p class="small text-muted mb-2">{{ s.description }}</p>
+                    {% if s.commands %}
+                    <pre class="bg-dark p-2 rounded small mb-0">{% for cmd in s.commands %}{{ cmd }}
+{% endfor %}</pre>
+                    {% endif %}
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

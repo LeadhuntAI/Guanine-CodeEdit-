@@ -1,0 +1,162 @@
+<!-- File Detail Panel (AJAX loaded) -->
+<div class="p-3">
+    <!-- Header -->
+    <div class="d-flex justify-content-between align-items-start mb-3">
+        <div>
+            <h6 class="file-path mb-1" style="word-break:break-all;">{{ filepath }}</h6>
+            <span class="badge bg-{{ 'warning text-dark' if item.category == 'conflict' and not item.resolved else 'primary' if item.category == 'conflict' else 'success' if item.category == 'auto_unique' else 'info' }}">
+                {{ item.category.replace('auto_', '').replace('_', ' ').title() }}{% if item.category == 'conflict' and item.resolved %} (Resolved){% endif %}
+            </span>
+            <span class="text-muted ms-2" style="font-size:0.8rem;">{{ versions|length }} version{{ 's' if versions|length != 1 }}</span>
+        </div>
+        <div class="d-flex gap-1">
+            {% if item.category == 'conflict' %}
+            <a href="/conflict/{{ filepath }}" class="btn btn-sm btn-outline-secondary" target="_blank">Full View</a>
+            {% else %}
+            <a href="/api/file-content/{{ filepath }}?version=0" class="btn btn-sm btn-outline-secondary" target="_blank">View Raw</a>
+            {% endif %}
+            {% if versions|length >= 2 %}
+            <a href="/merge/{{ filepath }}" class="btn btn-sm btn-outline-warning" target="_blank">Merge</a>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- All versions side by side as columns -->
+    <div class="d-flex gap-2 mb-3" style="overflow-x:auto;">
+        {% for v in versions %}
+        <div class="flex-shrink-0" style="min-width:180px; max-width:240px; flex:1;">
+            <div class="card bg-dark border{{ '-primary' if v.selected else '' }} h-100" style="font-size:0.76rem;"
+                 onclick="resolveVersion('{{ filepath }}', {{ v.index }})" role="button">
+                <div class="card-body py-2 px-2">
+                    <!-- Source name + select radio -->
+                    <div class="d-flex align-items-center gap-1 mb-1">
+                        <input type="radio" name="detsel" {{ 'checked' if v.selected }}
+                               onclick="event.stopPropagation(); resolveVersion('{{ filepath }}', {{ v.index }})">
+                        <strong style="font-size:0.8rem;">{{ v.source_name }}</strong>
+                        {% if v.selected %}<span class="badge bg-primary ms-auto" style="font-size:0.55rem;">Selected</span>{% endif %}
+                    </div>
+                    <!-- Metadata rows with highlights -->
+                    <table style="width:100%;font-size:0.73rem;">
+                        <tr>
+                            <td class="text-muted" style="width:55px;">Size</td>
+                            <td class="{{ 'hl-largest' if v.is_largest else '' }}">{{ v.size_human }}</td>
+                        </tr>
+                        <tr>
+                            <td class="text-muted">Lines</td>
+                            <td class="{{ 'hl-most-lines' if v.is_most_lines else '' }}">{{ v.line_count if v.line_count is not none else 'Binary' }}</td>
+                        </tr>
+                        <tr>
+                            <td class="text-muted">Modified</td>
+                            <td class="{{ 'hl-latest' if v.is_latest else '' }}">{{ v.modified_str }}</td>
+                        </tr>
+                        <tr>
+                            <td class="text-muted">Created</td>
+                            <td>{{ v.created_str }}</td>
+                        </tr>
+                        <tr>
+                            <td class="text-muted">SHA</td>
+                            <td class="file-path" style="font-size:0.68rem;">{{ v.sha256_short }}</td>
+                        </tr>
+                    </table>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+
+    <!-- Legend -->
+    {% if versions|length > 1 %}
+    <div class="mb-3" style="font-size:0.7rem;">
+        <span class="hl-largest me-2">Largest</span>
+        <span class="hl-latest me-2">Latest</span>
+        <span class="hl-most-lines">Most lines</span>
+    </div>
+    {% endif %}
+
+    <!-- Diff section -->
+    {% if versions|length >= 2 %}
+    <div class="card bg-dark border mb-3">
+        <div class="card-header py-1 d-flex justify-content-between align-items-center flex-wrap gap-1" style="font-size:0.78rem;">
+            <div class="d-flex align-items-center gap-2">
+                <button class="btn btn-sm btn-outline-secondary py-0" style="font-size:0.7rem;" onclick="navHunk('prev')" title="Ctrl+Up">&#9650;</button>
+                <span class="diff-counter" style="color:#888;">Diff -/-</span>
+                <button class="btn btn-sm btn-outline-secondary py-0" style="font-size:0.7rem;" onclick="navHunk('next')" title="Ctrl+Down">&#9660;</button>
+            </div>
+            <div class="d-flex align-items-center gap-1 flex-wrap">
+                <span class="text-muted">Compare:</span>
+                <!-- Quick pair buttons for all combinations -->
+                {% for v in versions %}
+                {% for v2 in versions %}
+                {% if v.index < v2.index %}
+                <button class="btn btn-sm py-0 {{ 'btn-primary' if v.index == diff_a_idx and v2.index == diff_b_idx else 'btn-outline-secondary' }}"
+                        style="font-size:0.65rem;"
+                        onclick="loadDetailDiff('{{ filepath }}', {{ v.index }}, {{ v2.index }})">
+                    {{ v.source_name[:8] }} vs {{ v2.source_name[:8] }}
+                </button>
+                {% endif %}
+                {% endfor %}
+                {% endfor %}
+            </div>
+        </div>
+        <!-- Side-by-side diff headers -->
+        <div class="d-flex border-bottom" style="font-size:0.75rem;background:#1e2225;">
+            <div class="px-2 py-1 text-warning" style="width:50%;">{{ versions[diff_a_idx].source_name if diff_a_idx < versions|length else 'A' }}</div>
+            <div class="px-2 py-1 text-info border-start" style="width:50%;">{{ versions[diff_b_idx].source_name if diff_b_idx < versions|length else 'B' }}</div>
+        </div>
+        <div class="sbs-wrapper" style="max-height:550px;" id="diffScrollArea">
+            <table class="sbs-table">
+                <tbody>
+                    {% for row in side_by_side %}
+                    <tr class="sbs-row-{{ row.type }}">
+                        <td class="line-num">{{ row.left_num }}</td>
+                        <td class="line-content left">{{ row.left_line | e }}</td>
+                        <td class="sbs-gutter"></td>
+                        <td class="line-num">{{ row.right_num }}</td>
+                        <td class="line-content right">{{ row.right_line | e }}</td>
+                    </tr>
+                    {% endfor %}
+                    {% if not side_by_side %}
+                    <tr><td colspan="5" class="text-center text-muted py-3">No differences.</td></tr>
+                    {% endif %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    {% elif versions|length == 1 %}
+    <!-- Single version preview -->
+    <div class="card bg-dark border">
+        <div class="card-header py-1" style="font-size:0.8rem;">
+            <strong>Preview</strong> <small class="text-muted">({{ versions[0].source_name }})</small>
+        </div>
+        <div style="max-height:500px;overflow:auto;">
+            <pre class="mb-0 p-2" style="font-size:0.76rem;background:transparent;color:#aaa;" id="previewContent">Loading...</pre>
+        </div>
+    </div>
+    <script>
+        fetch('/api/file-content/{{ filepath }}?version=0')
+            .then(r=>r.json())
+            .then(d=>{
+                const el=document.getElementById('previewContent');
+                el.textContent = d.is_binary ? '[Binary file]' : d.content.split('\n').slice(0,300).join('\n');
+            }).catch(e=>{document.getElementById('previewContent').textContent='Error: '+e;});
+    </script>
+    {% endif %}
+</div>
+
+<script>
+function resolveVersion(fp, idx) {
+    fetch('/resolve', {
+        method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'},
+        body:'filepath='+encodeURIComponent(fp)+'&selected_index='+idx+'&next_path='
+    }).then(()=>{ if (currentItem) loadDetail(fp, currentItem); });
+}
+function loadDetailDiff(fp, a, b) {
+    const panel = document.getElementById('detailPanel');
+    panel.innerHTML = '<div class="text-center p-4 text-muted">Loading...</div>';
+    fetch('/api/file-detail/'+fp+'?diff_a='+a+'&diff_b='+b)
+        .then(r=>r.text()).then(html=>{panel.innerHTML=html;currentHunkIdx=-1;})
+        .catch(e=>{panel.innerHTML='<div class="text-danger p-4">'+e+'</div>';});
+}
+currentHunkIdx = -1;
+</script>

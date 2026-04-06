@@ -1,0 +1,163 @@
+{% extends "base.html" %}
+{% block title %}Merge Progress - File Recovery Merger{% endblock %}
+
+{% block extra_css %}
+<style>
+    .report-list { max-height: 400px; overflow-y: auto; font-size: 0.8rem; }
+    .report-list .file-path { padding: 2px 6px; border-radius: 3px; }
+    .report-list .file-path:hover { background: rgba(255,255,255,0.05); }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-lg-8">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">Executing Merge</h5>
+            </div>
+            <div class="card-body text-center">
+                <div id="statusText" class="mb-3" style="font-size:1.1rem;">Preparing...</div>
+
+                <div class="progress mb-3" style="height: 28px;">
+                    <div id="progressBar" class="progress-bar progress-bar-striped progress-bar-animated"
+                         role="progressbar" style="width: 0%;">0%</div>
+                </div>
+
+                <div id="statsRow" class="d-flex justify-content-center gap-4 mb-3" style="font-size:0.9rem; display:none;">
+                    <div><strong id="newCount" class="text-success">0</strong> <span class="text-muted">new</span></div>
+                    <div><strong id="updatedCount" class="text-warning">0</strong> <span class="text-muted">updated</span></div>
+                    <div><strong id="skippedCount" class="text-info">0</strong> <span class="text-muted">unchanged</span></div>
+                    <div><strong id="errorCount" class="text-danger">0</strong> <span class="text-muted">errors</span></div>
+                    <div><strong id="doneCount">0</strong> / <strong id="totalCount">0</strong> <span class="text-muted">total</span></div>
+                </div>
+
+                <div id="doneSection" style="display:none;">
+                    <div class="alert alert-success mb-3" id="doneMessage"></div>
+                    <div class="d-flex justify-content-center gap-2 mb-4">
+                        <a href="/log" class="btn btn-primary">View Log</a>
+                        <a href="/browse" class="btn btn-outline-secondary">Browse</a>
+                        <a href="/conflicts" class="btn btn-outline-secondary">Conflicts</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Report section (shown after completion) -->
+        <div id="reportSection" style="display:none;">
+            <div id="newFilesReport" class="card mt-3" style="display:none;">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h6 class="mb-0 text-success">New Files Added</h6>
+                    <span class="badge bg-success" id="newFilesBadge">0</span>
+                </div>
+                <div class="card-body p-2 report-list" id="newFilesList"></div>
+            </div>
+
+            <div id="updatedFilesReport" class="card mt-3" style="display:none;">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h6 class="mb-0 text-warning">Updated Files (Overwritten)</h6>
+                    <span class="badge bg-warning text-dark" id="updatedFilesBadge">0</span>
+                </div>
+                <div class="card-body p-2 report-list" id="updatedFilesList"></div>
+            </div>
+
+            <div id="summaryCard" class="card mt-3">
+                <div class="card-header"><h6 class="mb-0">Summary</h6></div>
+                <div class="card-body" id="summaryBody" style="font-size:0.9rem;"></div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+const bar = document.getElementById('progressBar');
+const statusText = document.getElementById('statusText');
+const statsRow = document.getElementById('statsRow');
+
+const evtSource = new EventSource('/merge-events');
+
+evtSource.onmessage = function(event) {
+    const data = JSON.parse(event.data);
+
+    if (data.type === 'start') {
+        document.getElementById('totalCount').textContent = data.total;
+        statusText.textContent = `Copying ${data.total} files...`;
+        statsRow.style.display = '';
+    }
+    else if (data.type === 'progress') {
+        const pct = data.total > 0 ? Math.round(data.done / data.total * 100) : 0;
+        bar.style.width = pct + '%';
+        bar.textContent = pct + '%';
+        document.getElementById('doneCount').textContent = data.done;
+        document.getElementById('totalCount').textContent = data.total;
+        statusText.textContent = `Processing files... ${data.done} / ${data.total}`;
+    }
+    else if (data.type === 'done') {
+        evtSource.close();
+        bar.style.width = '100%';
+        bar.textContent = '100%';
+        bar.classList.remove('progress-bar-animated');
+        bar.classList.add(data.errors > 0 ? 'bg-warning' : 'bg-success');
+
+        document.getElementById('newCount').textContent = data.new_files;
+        document.getElementById('updatedCount').textContent = data.updated;
+        document.getElementById('skippedCount').textContent = data.skipped;
+        document.getElementById('errorCount').textContent = data.errors;
+        document.getElementById('doneCount').textContent = data.new_files + data.updated + data.skipped + data.errors;
+        statsRow.style.display = '';
+
+        statusText.textContent = 'Merge complete!';
+
+        const parts = [];
+        if (data.new_files > 0) parts.push(`${data.new_files} new files added`);
+        if (data.updated > 0) parts.push(`${data.updated} files updated`);
+        if (data.skipped > 0) parts.push(`${data.skipped} unchanged (skipped)`);
+        if (data.errors > 0) parts.push(`${data.errors} errors`);
+        document.getElementById('doneMessage').textContent = parts.join(', ') + '.';
+        document.getElementById('doneSection').style.display = 'block';
+
+        // Build report
+        document.getElementById('reportSection').style.display = 'block';
+
+        if (data.new_file_list && data.new_file_list.length > 0) {
+            const panel = document.getElementById('newFilesReport');
+            panel.style.display = 'block';
+            document.getElementById('newFilesBadge').textContent = data.new_file_list.length;
+            document.getElementById('newFilesList').innerHTML =
+                data.new_file_list.map(f => `<div class="file-path">${escHtml(f)}</div>`).join('');
+        }
+
+        if (data.updated_file_list && data.updated_file_list.length > 0) {
+            const panel = document.getElementById('updatedFilesReport');
+            panel.style.display = 'block';
+            document.getElementById('updatedFilesBadge').textContent = data.updated_file_list.length;
+            document.getElementById('updatedFilesList').innerHTML =
+                data.updated_file_list.map(f => `<div class="file-path">${escHtml(f)}</div>`).join('');
+        }
+
+        // Summary
+        document.getElementById('summaryBody').innerHTML =
+            `<p class="mb-1"><strong>${data.new_files + data.updated}</strong> files written to target directory.</p>` +
+            `<p class="mb-1"><strong>${data.skipped}</strong> files already up-to-date (skipped).</p>` +
+            (data.errors > 0 ? `<p class="mb-0 text-danger"><strong>${data.errors}</strong> files failed — check the log for details.</p>` : '');
+    }
+    else if (data.type === 'error') {
+        statusText.textContent = 'Error: ' + data.message;
+        bar.classList.add('bg-danger');
+    }
+};
+
+evtSource.onerror = function() {
+    if (statusText.textContent.startsWith('Merge complete')) return;
+    statusText.textContent = 'Connection lost. Merge may still be running...';
+};
+
+function escHtml(s) {
+    const d = document.createElement('div');
+    d.textContent = s;
+    return d.innerHTML;
+}
+</script>
+{% endblock %}

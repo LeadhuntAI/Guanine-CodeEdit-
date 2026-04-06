@@ -1,0 +1,22 @@
+{
+  "name": "example-analysis",
+  "description": "Example workflow: analyze a file and summarize it",
+  "type": "lightweight",
+  "layers": [
+    {
+      "name": "analyze",
+      "layer_type": "agentic_loop",
+      "content": "Analyze the file at {{ target_file }} and provide a summary of its purpose, key functions, and dependencies.",
+      "system_message": "You are a code analyst. Read the file and provide a structured analysis.",
+      "model": "anthropic/claude-sonnet-4-20250514",
+      "tools": ["read_file"],
+      "use_native_tools": true,
+      "max_iterations": 10
+    },
+    {
+      "name": "format-output",
+      "layer_type": "smart_template",
+      "content": "# Analysis of {{ target_file }}\n\n{PLO}"
+    }
+  ]
+}

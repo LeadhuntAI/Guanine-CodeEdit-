@@ -1,0 +1,73 @@
+{
+  "tools": [
+    {
+      "name": "read_file",
+      "description": "Read the contents of a file. Returns the full file content as text.",
+      "function_path": "agentic.tools.read_file.execute",
+      "parameters_schema": {
+        "type": "object",
+        "properties": {
+          "path": {"type": "string", "description": "File path relative to repo root"},
+          "start_line": {"type": "integer", "description": "Start reading from this line (1-based)"},
+          "end_line": {"type": "integer", "description": "Stop reading at this line (inclusive)"}
+        },
+        "required": ["path"]
+      }
+    },
+    {
+      "name": "write_file",
+      "description": "Write content to a file. Creates parent directories if needed.",
+      "function_path": "agentic.tools.write_file.execute",
+      "parameters_schema": {
+        "type": "object",
+        "properties": {
+          "path": {"type": "string", "description": "File path relative to repo root"},
+          "content": {"type": "string", "description": "Full file content to write"}
+        },
+        "required": ["path", "content"]
+      }
+    },
+    {
+      "name": "list_directory",
+      "description": "List files and subdirectories at a path. Returns names with type indicators (file/dir).",
+      "function_path": "agentic.tools.list_directory.execute",
+      "parameters_schema": {
+        "type": "object",
+        "properties": {
+          "path": {"type": "string", "description": "Directory path relative to repo root (default: '.')"},
+          "recursive": {"type": "boolean", "description": "List recursively up to depth 3 (default: false)"}
+        }
+      }
+    },
+    {
+      "name": "search_code",
+      "description": "Search for a regex pattern in files. Returns matching lines with file paths and line numbers.",
+      "function_path": "agentic.tools.search_code.execute",
+      "parameters_schema": {
+        "type": "object",
+        "properties": {
+          "pattern": {"type": "string", "description": "Regex pattern to search for"},
+          "file_pattern": {"type": "string", "description": "Glob pattern to filter files (e.g. '*.py')"},
+          "path": {"type": "string", "description": "Directory to search in (default: repo root)"}
+        },
+        "required": ["pattern"]
+      }
+    },
+    {
+      "name": "get_file_tree",
+      "description": "Get the full file tree of the repository as indented text. Respects .gitignore.",
+      "function_path": "agentic.tools.get_file_tree.execute",
+      "parameters_schema": {
+        "type": "object",
+        "properties": {
+          "max_depth": {"type": "integer", "description": "Maximum directory depth (default: 4)"},
+          "include_hidden": {"type": "boolean", "description": "Include dotfiles/dotdirs (default: false)"}
+        }
+      }
+    }
+  ],
+  "tool_sets": {
+    "code_analysis": ["read_file", "search_code", "list_directory", "get_file_tree"],
+    "file_ops": ["read_file", "write_file", "list_directory"]
+  }
+}

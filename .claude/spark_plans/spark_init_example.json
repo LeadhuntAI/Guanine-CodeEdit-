@@ -1,0 +1,18 @@
+{
+  "project_name": "My Project",
+  "description": "A brief description of what this project does and why it exists.",
+  "scope": "medium",
+  "language": "Python",
+  "framework": "FastAPI",
+  "database": "SQLite",
+  "package_manager": "pip",
+  "test_runner": "pytest",
+  "test_command": "pytest tests/ -v",
+  "build_command": null,
+  "lint_command": null,
+  "structure": "app-based",
+  "invariants": [],
+  "conventions": [],
+  "exclude_patterns": [],
+  "openrouter_api_key": "sk-or-v1-your-key-here"
+}

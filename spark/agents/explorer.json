@@ -1,0 +1,76 @@
+{
+  "name": "explorer",
+  "description": "Deeply analyzes a specific area of the codebase, identifying file roles, exports, imports, patterns, and cross-area references. Runs concurrently per area.",
+  "model": "moonshotai/kimi-k2.5",
+  "system_prompt_file": "prompts/explorer.md",
+  "tools": ["read_file", "list_directory", "search_code", "get_file_tree", "code_search"],
+  "max_tokens": 16384,
+  "max_iterations": 25,
+  "temperature": 0.1,
+  "output_schema": {
+    "type": "object",
+    "properties": {
+      "area": {
+        "type": "string",
+        "description": "Name of the area this explorer analyzed"
+      },
+      "files": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "description": "File path relative to repo root"
+            },
+            "role": {
+              "type": "string",
+              "description": "File role: model, controller, service, utility, config, test, type-definition, entry-point, middleware, etc."
+            },
+            "exports": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Public functions, classes, or constants exported by this file"
+            },
+            "imports_from": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Modules or files this file imports from (use area names where possible)"
+            },
+            "key_functions": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Most important functions/methods with brief descriptions (e.g. 'process_payment(order) -> Receipt')"
+            },
+            "patterns": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Design patterns observed: singleton, factory, decorator, middleware, pub-sub, etc."
+            },
+            "summary": {
+              "type": "string",
+              "description": "One-sentence summary of the file's purpose"
+            }
+          },
+          "required": ["path", "role", "exports", "imports_from", "key_functions", "patterns", "summary"]
+        },
+        "description": "Per-file analysis results"
+      },
+      "area_summary": {
+        "type": "string",
+        "description": "3-5 sentence summary of the area's overall purpose, architecture, and key patterns"
+      },
+      "cross_area_refs": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "References to other areas: 'imports X from <other-area>', 'exports Y used by <other-area>'"
+      },
+      "suggested_splits": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "Optional suggestions if this area should be split or files moved elsewhere"
+      }
+    },
+    "required": ["area", "files", "area_summary", "cross_area_refs"]
+  }
+}

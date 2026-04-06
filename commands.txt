@@ -1,0 +1,7 @@
+Resume this session with:───────────────────────────────────────────────────────────────────────────────────────────
+claude --resume "file-recovery-merger-tool"
+
+cd C:\Projects\360Marketing\Guanine(CodeEdit)
+.venv\Scripts\activate
+
+python spark/init.py --iterations 2 --debug

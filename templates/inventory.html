@@ -1,0 +1,139 @@
+{% extends "base.html" %}
+{% block title %}Inventory - File Recovery Merger{% endblock %}
+
+{% block content %}
+<!-- Stats Bar -->
+<div class="row g-3 mb-4">
+    <div class="col"><div class="stat-card bg-dark border"><div class="number">{{ stats.total }}</div><div class="label">Total Files</div></div></div>
+    <div class="col"><div class="stat-card bg-dark border border-success"><div class="number text-success">{{ stats.auto_unique }}</div><div class="label">Unique (auto)</div></div></div>
+    <div class="col"><div class="stat-card bg-dark border border-info"><div class="number text-info">{{ stats.auto_identical }}</div><div class="label">Identical (auto)</div></div></div>
+    <div class="col"><div class="stat-card bg-dark border border-warning"><div class="number text-warning">{{ stats.conflicts }}</div><div class="label">Conflicts</div></div></div>
+    <div class="col"><div class="stat-card bg-dark border border-primary"><div class="number text-primary">{{ stats.resolved }}</div><div class="label">Resolved</div></div></div>
+</div>
+
+<!-- Filters -->
+<div class="card mb-3">
+    <div class="card-body py-2">
+        <div class="row align-items-center g-2">
+            <div class="col-auto">
+                <div class="btn-group btn-group-sm">
+                    <a href="?filter=all&search={{ search }}&sort={{ sort_by }}&dir={{ sort_dir }}" class="btn btn-{{ 'primary' if filter_type == 'all' else 'outline-secondary' }}">All ({{ stats.total }})</a>
+                    <a href="?filter=auto&search={{ search }}&sort={{ sort_by }}&dir={{ sort_dir }}" class="btn btn-{{ 'primary' if filter_type == 'auto' else 'outline-secondary' }}">Auto-merge ({{ stats.auto_merge }})</a>
+                    <a href="?filter=conflicts&search={{ search }}&sort={{ sort_by }}&dir={{ sort_dir }}" class="btn btn-{{ 'primary' if filter_type == 'conflicts' else 'outline-secondary' }}">Conflicts ({{ stats.conflicts }})</a>
+                    <a href="?filter=unresolved&search={{ search }}&sort={{ sort_by }}&dir={{ sort_dir }}" class="btn btn-{{ 'primary' if filter_type == 'unresolved' else 'outline-secondary' }}">Unresolved ({{ stats.conflicts - stats.resolved }})</a>
+                </div>
+            </div>
+            <div class="col">
+                <form method="GET" class="d-flex">
+                    <input type="hidden" name="filter" value="{{ filter_type }}">
+                    <input type="hidden" name="sort" value="{{ sort_by }}">
+                    <input type="hidden" name="dir" value="{{ sort_dir }}">
+                    <input type="text" class="form-control form-control-sm" name="search" value="{{ search }}" placeholder="Search by path...">
+                    <button type="submit" class="btn btn-sm btn-outline-primary ms-2">Search</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- File Table -->
+<div class="card mb-3">
+    <div class="table-responsive">
+        <table class="table table-dark table-hover table-sm mb-0">
+            <thead>
+                <tr>
+                    <th style="width: 100px;">
+                        <a href="?filter={{ filter_type }}&search={{ search }}&sort=status&dir={{ 'desc' if sort_by == 'status' and sort_dir == 'asc' else 'asc' }}" class="text-decoration-none text-light">Status</a>
+                    </th>
+                    <th>
+                        <a href="?filter={{ filter_type }}&search={{ search }}&sort=path&dir={{ 'desc' if sort_by == 'path' and sort_dir == 'asc' else 'asc' }}" class="text-decoration-none text-light">Path</a>
+                    </th>
+                    <th style="width: 150px;">
+                        <a href="?filter={{ filter_type }}&search={{ search }}&sort=sources&dir={{ 'desc' if sort_by == 'sources' and sort_dir == 'asc' else 'asc' }}" class="text-decoration-none text-light">Sources</a>
+                    </th>
+                    <th style="width: 80px;">
+                        <a href="?filter={{ filter_type }}&search={{ search }}&sort=size&dir={{ 'desc' if sort_by == 'size' and sort_dir == 'asc' else 'asc' }}" class="text-decoration-none text-light">Size</a>
+                    </th>
+                    <th style="width: 130px;">
+                        <a href="?filter={{ filter_type }}&search={{ search }}&sort=modified&dir={{ 'desc' if sort_by == 'modified' and sort_dir == 'asc' else 'asc' }}" class="text-decoration-none text-light">Modified</a>
+                    </th>
+                    <th style="width: 60px;">Lines</th>
+                    <th style="width: 100px;">Action</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in items %}
+                <tr>
+                    <td>
+                        {% if item.category == 'auto_unique' %}
+                        <span class="badge bg-success">Unique</span>
+                        {% elif item.category == 'auto_identical' %}
+                        <span class="badge bg-info">Identical</span>
+                        {% elif item.category == 'conflict' and item.resolved %}
+                        <span class="badge bg-primary">Resolved</span>
+                        {% elif item.category == 'conflict' %}
+                        <span class="badge bg-warning text-dark">Conflict</span>
+                        {% endif %}
+                    </td>
+                    <td class="file-path text-truncate" style="max-width: 400px;" title="{{ item.relative_path }}">{{ item.relative_path }}</td>
+                    <td><small>{{ item.source_names }}</small></td>
+                    <td>{{ item.size }}</td>
+                    <td><small>{{ item.modified }}</small></td>
+                    <td>{{ item.lines if item.lines is not none else '-' }}</td>
+                    <td>
+                        {% if item.category == 'conflict' %}
+                        <a href="/conflict/{{ item.relative_path }}" class="btn btn-sm btn-{{ 'outline-primary' if item.resolved else 'warning' }}">
+                            {{ 'Edit' if item.resolved else 'Review' }}
+                        </a>
+                        {% else %}
+                        <small class="text-muted">{{ item.selected_source }}</small>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Pagination -->
+{% if total_pages > 1 %}
+<nav>
+    <ul class="pagination pagination-sm justify-content-center">
+        <li class="page-item {{ 'disabled' if page == 1 }}">
+            <a class="page-link" href="?filter={{ filter_type }}&search={{ search }}&sort={{ sort_by }}&dir={{ sort_dir }}&page={{ page - 1 }}">Prev</a>
+        </li>
+        {% for p in range(1, total_pages + 1) %}
+        {% if p == page or (p <= 3) or (p >= total_pages - 2) or (p >= page - 2 and p <= page + 2) %}
+        <li class="page-item {{ 'active' if p == page }}">
+            <a class="page-link" href="?filter={{ filter_type }}&search={{ search }}&sort={{ sort_by }}&dir={{ sort_dir }}&page={{ p }}">{{ p }}</a>
+        </li>
+        {% elif p == 4 or p == total_pages - 3 %}
+        <li class="page-item disabled"><span class="page-link">...</span></li>
+        {% endif %}
+        {% endfor %}
+        <li class="page-item {{ 'disabled' if page == total_pages }}">
+            <a class="page-link" href="?filter={{ filter_type }}&search={{ search }}&sort={{ sort_by }}&dir={{ sort_dir }}&page={{ page + 1 }}">Next</a>
+        </li>
+    </ul>
+</nav>
+{% endif %}
+
+<p class="text-muted text-center small">Showing {{ items|length }} of {{ total_items }} files (page {{ page }}/{{ total_pages }})</p>
+
+<!-- Action Buttons -->
+<div class="d-flex justify-content-center gap-3 mt-4 mb-4">
+    <form method="POST" action="/execute">
+        <input type="hidden" name="mode" value="auto">
+        <button type="submit" class="btn btn-success" onclick="return confirm('Copy {{ stats.auto_merge }} auto-merge files to target?')">
+            Execute Auto-Merges ({{ stats.auto_merge }})
+        </button>
+    </form>
+    <form method="POST" action="/execute">
+        <input type="hidden" name="mode" value="resolved">
+        <button type="submit" class="btn btn-primary" onclick="return confirm('Copy all resolved files to target?')">
+            Execute All Resolved
+        </button>
+    </form>
+</div>
+{% endblock %}

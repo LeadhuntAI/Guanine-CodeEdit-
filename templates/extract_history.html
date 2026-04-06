@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block title %}Extract Editor History - File Recovery Merger{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-lg-8">
+        <h2 class="mb-4">Extract Editor History</h2>
+        <p class="text-muted mb-4">
+            Scans Windsurf, VS Code, and Cursor local history directories for backed-up files.
+            Extracts them with their original filenames and folder structure into a destination folder,
+            which you can then use as a source in the comparison tool.
+        </p>
+
+        <!-- Detected History Sources -->
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5 class="mb-0">Detected History Sources</h5>
+            </div>
+            <div class="card-body">
+                {% if sources %}
+                <div class="list-group list-group-flush">
+                    {% for src in sources %}
+                    <div class="list-group-item bg-transparent d-flex justify-content-between align-items-center">
+                        <div>
+                            <strong>{{ src.name }}</strong>
+                            <br><small class="text-muted file-path">{{ src.path }}</small>
+                        </div>
+                        <span class="badge bg-success">{{ src.entry_count }} entries</span>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <div class="text-center text-muted py-3">
+                    <p>No editor history directories found on this system.</p>
+                    <p class="small">Expected locations checked:<br>
+                    %APPDATA%\Windsurf\User\History<br>
+                    %APPDATA%\Code\User\History<br>
+                    %APPDATA%\Cursor\User\History</p>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+
+        {% if sources %}
+        <form method="POST" action="/extract-history">
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h5 class="mb-0">Extraction Settings</h5>
+                </div>
+                <div class="card-body">
+                    <div class="mb-3">
+                        <label class="form-label">Destination Directory</label>
+                        <input type="text" class="form-control file-path" name="dest_dir"
+                               placeholder="C:\Recovery\EditorHistory" required>
+                        <div class="form-text">Where extracted files will be saved with their original names and folder structure.</div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">Project Folder Filter <span class="text-muted">(optional)</span></label>
+                        <input type="text" class="form-control file-path" name="project_filter"
+                               placeholder="C:\Projects\MyProject">
+                        <div class="form-text">Only extract files that originally belonged to this project folder. Leave empty to extract everything.</div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">Time Range (hours)</label>
+                        <input type="number" class="form-control" name="hours" value="120000" style="width: 200px;">
+                        <div class="form-text">How far back to search in history. Default 120000 = ~13.7 years (all history).</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="d-grid">
+                <button type="submit" class="btn btn-warning btn-lg">Extract Files from History</button>
+            </div>
+        </form>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

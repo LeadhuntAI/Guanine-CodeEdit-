@@ -1,0 +1,204 @@
+{% extends "base.html" %}
+{% block title %}Conflict: {{ filepath }} - File Recovery Merger{% endblock %}
+
+{% block extra_css %}
+<style>
+    .version-meta td { padding: 2px 8px; font-size: 0.85rem; }
+    .version-meta th { padding: 2px 8px; font-size: 0.85rem; font-weight: 600; width: 100px; }
+    .diff-tab-content { background: #1a1d21; border-radius: 0 0 6px 6px; }
+</style>
+{% endblock %}
+
+{% block content %}
+<!-- Navigation -->
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <div>
+        {% if prev_path %}
+        <a href="/conflict/{{ prev_path }}" class="btn btn-sm btn-outline-secondary">&larr; Previous</a>
+        {% endif %}
+    </div>
+    <div class="text-center">
+        <h5 class="mb-0 file-path">{{ filepath }}</h5>
+        <small class="text-muted">Conflict {{ current_idx }} of {{ total_conflicts }}
+            {% if resolved %}<span class="badge bg-success ms-2">Resolved</span>{% endif %}
+        </small>
+    </div>
+    <div>
+        {% if next_path %}
+        <a href="/conflict/{{ next_path }}" class="btn btn-sm btn-outline-secondary">Next &rarr;</a>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Version Cards -->
+<form method="POST" action="/resolve" id="resolveForm">
+    <input type="hidden" name="filepath" value="{{ filepath }}">
+    <input type="hidden" name="next_path" value="{{ next_path or '' }}">
+
+    <div class="row g-3 mb-4">
+        {% for v in versions %}
+        <div class="col-md-{{ 12 // versions|length if versions|length <= 4 else 3 }}">
+            <div class="version-card {{ 'selected' if v.selected }}" onclick="selectVersion({{ v.index }})" id="vcard_{{ v.index }}">
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <h6 class="mb-0">
+                        <input type="radio" name="selected_index" value="{{ v.index }}" {{ 'checked' if v.selected }} id="radio_{{ v.index }}" class="me-1">
+                        <label for="radio_{{ v.index }}">{{ v.source_name }}</label>
+                    </h6>
+                    {% if v.selected %}
+                    <span class="badge bg-primary">Selected</span>
+                    {% endif %}
+                </div>
+                <table class="version-meta">
+                    <tr><th>Modified:</th><td>{{ v.modified_str }}</td></tr>
+                    <tr><th>Created:</th><td>{{ v.created_str }}</td></tr>
+                    <tr><th>Size:</th><td>{{ v.size_human }}</td></tr>
+                    <tr><th>Lines:</th><td>{{ v.line_count if v.line_count is not none else 'Binary' }}</td></tr>
+                    <tr><th>SHA-256:</th><td class="file-path">{{ v.sha256_short }}...</td></tr>
+                </table>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+
+    <!-- Action Buttons -->
+    <div class="d-flex justify-content-center gap-2 mb-4">
+        <button type="submit" class="btn btn-primary">
+            {% if next_path %}Save &amp; Next{% else %}Save Resolution{% endif %}
+        </button>
+        {% if versions|length >= 2 %}
+        <a href="/merge/{{ filepath }}?a={{ diff_a_idx }}&b={{ diff_b_idx }}" class="btn btn-outline-warning">Merge Editor</a>
+        {% endif %}
+        <a href="/conflicts" class="btn btn-outline-secondary">Back to List</a>
+        <a href="/browse" class="btn btn-outline-secondary">Browse</a>
+    </div>
+</form>
+
+<!-- Diff View -->
+{% if versions|length >= 2 %}
+<div class="card">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <div>
+            <!-- Diff mode tabs -->
+            <ul class="nav nav-tabs card-header-tabs" id="diffTabs" role="tablist">
+                <li class="nav-item">
+                    <button class="nav-link active" id="sbs-tab" data-bs-toggle="tab" data-bs-target="#sbs-view" type="button">Side-by-Side</button>
+                </li>
+                <li class="nav-item">
+                    <button class="nav-link" id="unified-tab" data-bs-toggle="tab" data-bs-target="#unified-view" type="button">Unified</button>
+                </li>
+            </ul>
+        </div>
+        <div class="d-flex gap-2 align-items-center">
+            <label class="small text-muted">Compare:</label>
+            <select id="diffSelectA" class="form-select form-select-sm" style="width: auto;" onchange="switchDiffPair()">
+                {% for v in versions %}
+                <option value="{{ v.index }}" {{ 'selected' if v.index == diff_a_idx }}>{{ v.source_name }}</option>
+                {% endfor %}
+            </select>
+            <span class="text-muted">vs</span>
+            <select id="diffSelectB" class="form-select form-select-sm" style="width: auto;" onchange="switchDiffPair()">
+                {% for v in versions %}
+                <option value="{{ v.index }}" {{ 'selected' if v.index == diff_b_idx }}>{{ v.source_name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+    </div>
+
+    <div class="tab-content diff-tab-content">
+        <!-- Side-by-Side View (git merge style) -->
+        <div class="tab-pane fade show active" id="sbs-view" role="tabpanel">
+            <div class="d-flex border-bottom" style="font-size: 0.8rem;">
+                <div class="flex-fill px-3 py-1 text-warning" style="width: 50%;">
+                    {{ versions[diff_a_idx].source_name if diff_a_idx < versions|length else 'A' }}
+                </div>
+                <div class="flex-fill px-3 py-1 text-info border-start" style="width: 50%;">
+                    {{ versions[diff_b_idx].source_name if diff_b_idx < versions|length else 'B' }}
+                </div>
+            </div>
+            <div class="sbs-wrapper">
+                <table class="sbs-table">
+                    {% for row in side_by_side %}
+                    <tr class="sbs-row-{{ row.type }}">
+                        <td class="line-num">{{ row.left_num }}</td>
+                        <td class="line-content left">{{ row.left_line | e }}</td>
+                        <td class="sbs-gutter"></td>
+                        <td class="line-num">{{ row.right_num }}</td>
+                        <td class="line-content right">{{ row.right_line | e }}</td>
+                    </tr>
+                    {% endfor %}
+                    {% if not side_by_side %}
+                    <tr><td colspan="5" class="text-center text-muted py-3">No differences to display.</td></tr>
+                    {% endif %}
+                </table>
+            </div>
+        </div>
+
+        <!-- Unified Diff View -->
+        <div class="tab-pane fade" id="unified-view" role="tabpanel">
+            <pre class="diff-view mb-0">{% for line in diff_lines %}{% if line.startswith('---') or line.startswith('+++') %}<span class="diff-hdr">{{ line | e }}</span>
+{% elif line.startswith('@@') %}<span class="diff-hdr">{{ line | e }}</span>
+{% elif line.startswith('+') %}<span class="diff-add">{{ line | e }}</span>
+{% elif line.startswith('-') %}<span class="diff-del">{{ line | e }}</span>
+{% else %}<span class="diff-ctx">{{ line | e }}</span>
+{% endif %}{% endfor %}</pre>
+        </div>
+    </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function switchDiffPair() {
+    const a = document.getElementById('diffSelectA').value;
+    const b = document.getElementById('diffSelectB').value;
+    const fp = {{ filepath | tojson }};
+    window.location.href = '/conflict/' + encodeURI(fp) + '?diff_a=' + a + '&diff_b=' + b;
+}
+
+function selectVersion(idx) {
+    document.getElementById(`radio_${idx}`).checked = true;
+    document.querySelectorAll('.version-card').forEach(c => {
+        c.classList.remove('selected');
+        c.querySelector('.badge')?.remove();
+    });
+    const card = document.getElementById(`vcard_${idx}`);
+    card.classList.add('selected');
+    const badge = document.createElement('span');
+    badge.className = 'badge bg-primary';
+    badge.textContent = 'Selected';
+    card.querySelector('.d-flex').appendChild(badge);
+}
+
+// Keyboard shortcuts
+document.addEventListener('keydown', function(e) {
+    if (e.target.matches('select, input, textarea')) return;
+    if (e.key === 'ArrowLeft') {
+        {% if prev_path %}window.location = '/conflict/' + encodeURI({{ prev_path | tojson }});{% endif %}
+    }
+    if (e.key === 'ArrowRight') {
+        {% if next_path %}window.location = '/conflict/' + encodeURI({{ next_path | tojson }});{% endif %}
+    }
+    if (e.key === 'Enter') {
+        document.getElementById('resolveForm').submit();
+    }
+    const num = parseInt(e.key);
+    if (num >= 1 && num <= {{ versions|length }}) {
+        selectVersion(num - 1);
+    }
+    // Toggle diff view with 's' (side-by-side) and 'u' (unified)
+    if (e.key === 's') document.getElementById('sbs-tab').click();
+    if (e.key === 'u') document.getElementById('unified-tab').click();
+});
+
+// Sync scroll between left and right columns (side-by-side)
+const sbsWrapper = document.querySelector('.sbs-wrapper');
+if (sbsWrapper) {
+    // Jump to first difference
+    const firstDiff = sbsWrapper.querySelector('.sbs-row-delete, .sbs-row-insert, .sbs-row-replace');
+    if (firstDiff) {
+        setTimeout(() => firstDiff.scrollIntoView({block: 'center'}), 100);
+    }
+}
+</script>
+{% endblock %}

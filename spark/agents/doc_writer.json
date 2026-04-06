@@ -1,0 +1,9 @@
+{
+  "name": "doc_writer",
+  "description": "Generates structured documentation files for a codebase area. Writes Markdown rule files to .claude/rules/docs/ and updates the rules index. Runs concurrently per area.",
+  "model": "z-ai/glm-5-turbo",
+  "system_prompt_file": "prompts/doc_writer.md",
+  "tools": ["read_file", "write_file", "list_directory", "code_search"],
+  "max_tokens": 8192,
+  "temperature": 0.1
+}

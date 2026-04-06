@@ -1,0 +1,130 @@
+{% extends "base.html" %}
+{% block title %}Agent Sessions{% endblock %}
+
+{% block extra_css %}
+<style>
+    .status-pending { color: #6c757d; }
+    .status-running { color: #0dcaf0; }
+    .status-completed { color: #ffc107; }
+    .status-review { color: #6f42c1; }
+    .status-merged { color: #198754; }
+    .status-rejected { color: #dc3545; }
+    .status-error { color: #dc3545; }
+    .session-card { border-left: 4px solid #333; padding-left: 12px; margin-bottom: 12px; }
+    .session-card.status-running { border-left-color: #0dcaf0; }
+    .session-card.status-completed { border-left-color: #ffc107; }
+    .session-card.status-review { border-left-color: #6f42c1; }
+    .session-card.status-merged { border-left-color: #198754; }
+    .session-card.status-rejected { border-left-color: #dc3545; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-lg-8">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <h3>Agent Sessions</h3>
+            <div>
+                <a href="{{ url_for('agent.repos') }}" class="btn btn-outline-secondary btn-sm">Manage Repos</a>
+            </div>
+        </div>
+
+        <!-- Filters -->
+        <div class="mb-3 d-flex gap-2">
+            <a href="{{ url_for('agent.sessions') }}" class="btn btn-sm {{ 'btn-primary' if not status_filter else 'btn-outline-secondary' }}">All</a>
+            {% for s in ['pending', 'running', 'completed', 'review', 'merged', 'rejected'] %}
+            <a href="{{ url_for('agent.sessions', status=s) }}" class="btn btn-sm {{ 'btn-primary' if status_filter == s else 'btn-outline-secondary' }}">{{ s | capitalize }}</a>
+            {% endfor %}
+        </div>
+
+        {% if sessions %}
+        {% for session in sessions %}
+        <div class="card mb-3 session-card status-{{ session.status }}">
+            <div class="card-body">
+                <div class="d-flex justify-content-between">
+                    <div>
+                        <h5 class="mb-1">
+                            <a href="{{ url_for('agent.session_detail', session_id=session.session_id) }}" class="text-decoration-none">
+                                {{ session.task_description[:80] }}{% if session.task_description | length > 80 %}...{% endif %}
+                            </a>
+                        </h5>
+                        <small class="text-muted">
+                            {{ session.session_id }}
+                            {% if repos_map.get(session.repo_id) %}
+                            | Repo: {{ repos_map[session.repo_id].repo_name }}
+                            {% endif %}
+                            {% if session.agent_model %}
+                            | Model: {{ session.agent_model }}
+                            {% endif %}
+                        </small>
+                    </div>
+                    <div class="text-end">
+                        <span class="badge bg-{{ 'secondary' if session.status == 'pending' else 'info' if session.status == 'running' else 'warning' if session.status == 'completed' else 'purple' if session.status == 'review' else 'success' if session.status == 'merged' else 'danger' }}">
+                            {{ session.status | upper }}
+                        </span>
+                        <br>
+                        <small class="text-muted">{{ session.created_at[:16] if session.created_at else '' }}</small>
+                    </div>
+                </div>
+                {% if session.external_context %}
+                <div class="mt-2">
+                    <small class="text-muted">Context: {{ session.external_context[:120] }}{% if session.external_context | length > 120 %}...{% endif %}</small>
+                </div>
+                {% endif %}
+                <div class="mt-2">
+                    {% if session.status == 'completed' %}
+                    <a href="{{ url_for('agent.review_session', session_id=session.session_id) }}" class="btn btn-sm btn-warning">Review Changes</a>
+                    {% elif session.status == 'review' %}
+                    <a href="{{ url_for('agent.review_session', session_id=session.session_id) }}" class="btn btn-sm btn-primary">Continue Review</a>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+        {% else %}
+        <div class="alert alert-info">
+            No sessions found{% if status_filter %} with status "{{ status_filter }}"{% endif %}.
+            Create one using the form on the right.
+        </div>
+        {% endif %}
+    </div>
+
+    <div class="col-lg-4">
+        <div class="card">
+            <div class="card-header"><h5>Create Agent Session</h5></div>
+            <div class="card-body">
+                {% if repos %}
+                <form method="post" action="{{ url_for('agent.sessions') }}">
+                    <div class="mb-3">
+                        <label class="form-label">Repository</label>
+                        <select name="repo_id" class="form-select" required>
+                            <option value="">Select a repo...</option>
+                            {% for repo in repos %}
+                            <option value="{{ repo.repo_id }}">{{ repo.repo_name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Task Description</label>
+                        <textarea name="task_description" class="form-control" rows="3" required placeholder="Fix the login bug in auth.py..."></textarea>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Agent Model (optional)</label>
+                        <input type="text" name="agent_model" class="form-control" placeholder="e.g. anthropic/claude-sonnet-4">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">External Context (optional)</label>
+                        <textarea name="external_context" class="form-control" rows="2" placeholder="Ticket URL, PR link, additional context..."></textarea>
+                    </div>
+                    <button type="submit" class="btn btn-success">Create Session</button>
+                </form>
+                {% else %}
+                <div class="alert alert-warning">
+                    No repos registered. <a href="{{ url_for('agent.repos') }}">Register a repo</a> first.
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

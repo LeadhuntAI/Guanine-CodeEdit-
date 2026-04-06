@@ -1,0 +1,711 @@
+{% extends "base.html" %}
+{% block title %}Browse Files - File Recovery Merger{% endblock %}
+
+{% block extra_css %}
+<style>
+    .browse-layout { display: flex; height: calc(100vh - 130px); gap: 0; }
+    .browse-sidebar { width: 520px; min-width: 380px; max-width: 60vw; overflow-y: auto; border-right: 1px solid #333; resize: horizontal; }
+    .browse-detail { flex: 1; overflow-y: auto; background: #1a1d21; }
+
+    /* Filter bar */
+    .filter-bar { padding: 8px 12px; border-bottom: 1px solid #333; background: #1a1d21; position: sticky; top: 0; z-index: 10; }
+    .filter-bar label { font-size: 0.78rem; cursor: pointer; margin-right: 10px; white-space: nowrap; }
+
+    /* Directory rows */
+    .dir-row { padding: 3px 8px; cursor: pointer; display: flex; align-items: center; gap: 4px; font-size: 0.82rem; border-bottom: 1px solid #1e2125; }
+    .dir-row:hover { background: rgba(255,255,255,0.04); }
+    .dir-row .dir-chev { font-size: 0.6rem; width: 14px; text-align: center; transition: transform 0.15s; color: #666; flex-shrink: 0; }
+    .dir-row .dir-chev.open { transform: rotate(90deg); }
+    .dir-children { display: none; }
+    .dir-children.open { display: block; }
+
+    /* File item block */
+    .file-item { border-bottom: 1px solid #1a1d21; }
+    .file-name-row {
+        padding: 3px 8px; cursor: pointer; display: flex; align-items: center; gap: 4px;
+        font-size: 0.82rem; transition: background 0.1s;
+    }
+    .file-name-row:hover { background: rgba(255,255,255,0.04); }
+    .file-name-row.active { background: rgba(13,110,253,0.15); border-left: 3px solid #0d6efd; padding-left: 5px; }
+    .file-name-row .fname {
+        flex: 1; font-family: 'Cascadia Code','Consolas',monospace;
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .file-name-row .fchev { font-size: 0.55rem; transition: transform 0.15s; color: #555; width: 14px; text-align: center; flex-shrink: 0; }
+    .file-name-row .fchev.open { transform: rotate(90deg); }
+
+    /* Done checkbox */
+    .done-check { flex-shrink: 0; cursor: pointer; accent-color: #198754; }
+
+    /* Version sub-rows */
+    .ver-block { display: none; background: #14171a; padding: 0; }
+    .ver-block.open { display: block; }
+    .ver-row {
+        padding: 3px 12px 3px 34px; display: flex; align-items: center; gap: 0;
+        font-size: 0.73rem; color: #888; border-bottom: 1px solid #111; cursor: pointer;
+    }
+    .ver-row:hover { background: rgba(255,255,255,0.025); color: #bbb; }
+    .ver-row .vr-check { width: 22px; flex-shrink: 0; text-align: center; }
+    .ver-row .vr-check input { cursor: pointer; }
+    .ver-row .vr-source { width: 105px; flex-shrink: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .ver-row .vr-size { width: 62px; flex-shrink: 0; text-align: right; padding-right: 6px; }
+    .ver-row .vr-lines { width: 48px; flex-shrink: 0; text-align: right; padding-right: 6px; }
+    .ver-row .vr-date { width: 130px; flex-shrink: 0; font-family: 'Cascadia Code','Consolas',monospace; }
+    .ver-row .vr-hash { flex-shrink: 0; font-family: 'Cascadia Code','Consolas',monospace; color: #444; font-size: 0.7rem; }
+
+    /* Highlight badges for largest / latest */
+    .hl-largest { background: rgba(13,202,240,0.15); border: 1px solid rgba(13,202,240,0.4); border-radius: 3px; padding: 0 3px; color: #0dcaf0; }
+    .hl-latest  { background: rgba(255,193,7,0.15);  border: 1px solid rgba(255,193,7,0.4);  border-radius: 3px; padding: 0 3px; color: #ffc107; }
+    .hl-most-lines { background: rgba(25,135,84,0.15); border: 1px solid rgba(25,135,84,0.4); border-radius: 3px; padding: 0 3px; color: #198754; }
+
+    /* Detail panel placeholder */
+    .detail-empty { display: flex; align-items: center; justify-content: center; height: 100%; color: #555; }
+    .tree-loading { display: flex; align-items: center; justify-content: center; height: 200px; color: #555; }
+</style>
+{% endblock %}
+
+{% block content %}
+<!-- Top bar -->
+<div class="d-flex align-items-center justify-content-between mb-0 px-1" style="height: 34px;">
+    <span class="text-muted" style="font-size:0.85rem;">File Browser</span>
+    <div class="d-flex gap-3 align-items-center" id="statsBar" style="font-size: 0.78rem;">
+        <span class="text-muted">Loading...</span>
+    </div>
+    <div class="d-flex gap-2">
+        <form method="POST" action="/execute" style="display:inline;">
+            <input type="hidden" name="mode" value="auto">
+            <button type="submit" class="btn btn-sm btn-outline-secondary py-0" style="font-size:0.75rem;"
+                    onclick="return confirm('Copy only unique + identical files to target? (no conflicts)')">
+                Auto-Merge Only
+            </button>
+        </form>
+        <form method="POST" action="/execute" style="display:inline;">
+            <input type="hidden" name="mode" value="all">
+            <button type="submit" class="btn btn-sm btn-primary py-0" style="font-size:0.75rem;"
+                    onclick="return confirm('Copy all files to target?\n\n- Unique files\n- Identical files\n- Resolved conflicts\n\nUnresolved conflicts will be skipped.')">
+                Execute Merge
+            </button>
+        </form>
+    </div>
+</div>
+
+<div class="browse-layout">
+    <!-- ========== LEFT SIDEBAR ========== -->
+    <div class="browse-sidebar" id="sidebar">
+        <div class="filter-bar">
+            <input type="text" class="form-control form-control-sm mb-1" id="searchInput"
+                   placeholder="Search files..." style="font-size: 0.8rem;">
+            <div class="d-flex flex-wrap align-items-center">
+                <label class="text-warning"><input type="checkbox" id="fC" checked> Conflicts (<span id="cntConflict">0</span>)</label>
+                <label class="text-success"><input type="checkbox" id="fU" checked> Unique (<span id="cntUnique">0</span>)</label>
+                <label class="text-info"><input type="checkbox" id="fI" checked> Identical (<span id="cntIdentical">0</span>)</label>
+                <button class="btn btn-sm btn-outline-success ms-auto py-0" style="font-size:0.72rem;" onclick="acceptAllDefaults()" title="Mark all unresolved conflicts as resolved with their current default selection">Accept All Defaults</button>
+            </div>
+        </div>
+
+        <div id="treeContainer">
+            <div class="tree-loading">Loading file tree...</div>
+        </div>
+    </div>
+
+    <!-- ========== RIGHT DETAIL ========== -->
+    <div class="browse-detail" id="detailPanel">
+        <div class="detail-empty">
+            <div class="text-center">
+                <div style="font-size:3rem;opacity:0.25;">&#128196;</div>
+                <p>Click a file to view diff &amp; details</p>
+                <p class="small" style="opacity:0.4;">&uarr;&darr; navigate &middot; Ctrl+&uarr;&darr; jump diffs &middot; / search &middot; Enter full view</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+let TREE = {};
+let STATS = {};
+let currentItem = null;
+let currentHunkIdx = -1;
+let allFileElements = [];
+
+/*
+ * ========================================================================
+ * UNRESOLVED COUNTS — tracked in JS data, NOT the DOM
+ *
+ * unresolvedMap[dirPath] = number of unresolved conflicts under that dir
+ * fileDataMap[filePath]  = reference to the file's data object in TREE
+ * ========================================================================
+ */
+let unresolvedMap = {};   // "src/components" -> 3
+let fileDataMap = {};     // "src/components/App.tsx" -> {_type:'file', ...}
+
+/** Build unresolvedMap and fileDataMap from TREE. Called once after load. */
+function buildCountMaps(node, pathPrefix) {
+    for (const [name, val] of Object.entries(node)) {
+        const fullPath = pathPrefix ? pathPrefix + '/' + name : name;
+        if (val._type === 'file') {
+            fileDataMap[val.relative_path] = val;
+        } else if (val._type === 'dir') {
+            buildCountMaps(val.children, fullPath);
+        }
+    }
+}
+
+function computeUnresolved(node) {
+    let c = 0;
+    for (const val of Object.values(node)) {
+        if (val._type === 'file' && val.category === 'conflict' && !val.resolved) c++;
+        else if (val._type === 'dir') c += computeUnresolved(val.children);
+    }
+    return c;
+}
+
+/** Mark a single file as resolved/unresolved in the TREE data + update all folder badges. */
+function markFileResolved(filePath, resolved) {
+    const fd = fileDataMap[filePath];
+    if (fd) fd.resolved = resolved;
+
+    // Update STATS
+    const delta = resolved ? 1 : -1;
+    STATS.resolved = Math.max(0, (STATS.resolved || 0) + delta);
+    renderStats();
+
+    // Update the dir-wrapper badges by walking all ancestors of this path
+    const parts = filePath.split('/');
+    for (let i = 1; i < parts.length; i++) {
+        const dirPath = parts.slice(0, i).join('/');
+        const wrapper = document.querySelector(`.dir-wrapper[data-path="${CSS.escape(dirPath)}"]`);
+        if (wrapper) updateDirBadge(wrapper);
+    }
+}
+
+/** Bulk-mark many files resolved in the TREE data, then refresh all visible folder badges. */
+function markManyResolved(filePaths) {
+    let count = 0;
+    for (const fp of filePaths) {
+        const fd = fileDataMap[fp];
+        if (fd && !fd.resolved) {
+            fd.resolved = true;
+            count++;
+        }
+    }
+    STATS.resolved = Math.min((STATS.resolved || 0) + count, STATS.conflicts || 0);
+    renderStats();
+    // Refresh all rendered dir badges
+    document.querySelectorAll('.dir-wrapper[data-path]').forEach(w => updateDirBadge(w));
+    return count;
+}
+
+/** Recompute a single dir-wrapper's badge from the TREE data. */
+function updateDirBadge(wrapper) {
+    const dirPath = wrapper.dataset.path;
+    const badge = wrapper.querySelector(':scope > .dir-row .dir-conflict-badge');
+    const acceptBtn = wrapper.querySelector(':scope > .dir-row .dir-accept-btn');
+    if (!badge) return;
+
+    // Walk the TREE to find this dir node and count unresolved
+    const dirNode = getTreeNode(dirPath);
+    if (!dirNode) return;
+
+    const total = parseInt(badge.dataset.total || '0');
+    const unresolved = computeUnresolved(dirNode);
+    badge.dataset.unresolved = unresolved;
+
+    if (unresolved > 0) {
+        badge.className = 'dir-conflict-badge badge bg-warning text-dark';
+        badge.style.cssText = 'font-size:0.55rem;';
+        badge.textContent = unresolved;
+    } else if (total > 0) {
+        badge.className = 'dir-conflict-badge badge bg-success';
+        badge.style.cssText = 'font-size:0.55rem;';
+        badge.textContent = '\u2713 ' + total;
+    }
+    if (acceptBtn) acceptBtn.style.display = unresolved > 0 ? '' : 'none';
+}
+
+/** Navigate into TREE by a slash-separated path like "src/components". */
+function getTreeNode(path) {
+    const parts = path.split('/');
+    let node = TREE;
+    for (const p of parts) {
+        if (!node[p]) return null;
+        if (node[p]._type === 'dir') node = node[p].children;
+        else return node[p];
+    }
+    return node;
+}
+
+/* ======== LOAD TREE DATA ======== */
+function loadTree() {
+    fetch('/api/browse-tree')
+        .then(r => r.json())
+        .then(data => {
+            TREE = data.tree;
+            STATS = data.stats;
+            fileDataMap = {};
+            buildCountMaps(TREE, '');
+            renderStats();
+            renderTree();
+        })
+        .catch(err => {
+            document.getElementById('treeContainer').innerHTML =
+                '<div class="text-danger p-3">Failed to load: ' + err + '</div>';
+        });
+}
+
+function renderStats() {
+    const s = STATS;
+    const unresolved = (s.conflicts||0) - (s.resolved||0);
+    document.getElementById('statsBar').innerHTML = `
+        ${unresolved > 0
+            ? `<span class="text-warning fw-bold">${unresolved} unresolved</span>`
+            : `<span class="text-success fw-bold">\u2713 All resolved</span>`}
+        <span class="text-primary">${s.resolved||0}/${s.conflicts||0} resolved</span>
+        <span class="text-success">${s.auto_unique||0} unique</span>
+        <span class="text-info">${s.auto_identical||0} identical</span>
+        <span class="text-muted">${s.total||0} total</span>
+    `;
+    document.getElementById('cntConflict').textContent = countCategory(TREE, 'conflict');
+    document.getElementById('cntUnique').textContent = countCategory(TREE, 'unique');
+    document.getElementById('cntIdentical').textContent = countCategory(TREE, 'identical');
+}
+
+function countCategory(node, cat) {
+    let c = 0;
+    for (const val of Object.values(node)) {
+        if (val._type === 'file' && val.category === cat) c++;
+        else if (val._type === 'dir') c += countCategory(val.children, cat);
+    }
+    return c;
+}
+
+/* ======== RENDER TREE ======== */
+function renderTree() {
+    const container = document.getElementById('treeContainer');
+    container.innerHTML = '';
+    allFileElements = [];
+    renderNode(TREE, container, 0, '');
+    applyFilters();
+}
+
+function renderNode(node, parentEl, depth, pathPrefix) {
+    const entries = Object.entries(node).sort((a, b) => {
+        const aDir = a[1]._type === 'dir' ? 0 : 1;
+        const bDir = b[1]._type === 'dir' ? 0 : 1;
+        if (aDir !== bDir) return aDir - bDir;
+        return a[0].localeCompare(b[0]);
+    });
+    for (const [name, val] of entries) {
+        const fullPath = pathPrefix ? pathPrefix + '/' + name : name;
+        if (val._type === 'dir') renderDir(name, val, parentEl, depth, fullPath);
+        else if (val._type === 'file') renderFile(name, val, parentEl, depth);
+    }
+}
+
+function renderDir(name, dirData, parentEl, depth, fullPath) {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'dir-wrapper';
+    wrapper.dataset.path = fullPath;
+
+    const row = document.createElement('div');
+    row.className = 'dir-row';
+    row.style.paddingLeft = (8 + depth * 18) + 'px';
+
+    const chev = document.createElement('span');
+    chev.className = 'dir-chev';
+    chev.innerHTML = '&#9654;';
+
+    const icon = document.createElement('span');
+    icon.style.color = '#ffc107';
+    icon.innerHTML = '&#128193;';
+
+    const nameSpan = document.createElement('span');
+    nameSpan.className = 'text-warning fw-bold';
+    nameSpan.textContent = name + '/';
+
+    const info = document.createElement('span');
+    info.className = 'ms-auto d-flex align-items-center gap-2';
+    info.style.cssText = 'font-size:0.72rem;color:#666;';
+
+    // Accept button (only if dir has any conflicts)
+    if (dirData.conflict_count > 0) {
+        const acceptBtn = document.createElement('button');
+        acceptBtn.className = 'btn btn-sm btn-outline-success py-0 px-1 dir-accept-btn';
+        acceptBtn.style.cssText = 'font-size:0.6rem;line-height:1.3;';
+        acceptBtn.textContent = 'Accept';
+        acceptBtn.title = 'Accept defaults for all conflicts in ' + name + '/';
+        acceptBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            acceptDefaultsForFolder(fullPath, wrapper);
+        });
+        // Hide if already all resolved
+        const initUnresolved = computeUnresolved(dirData.children);
+        if (initUnresolved === 0) acceptBtn.style.display = 'none';
+        info.appendChild(acceptBtn);
+    }
+
+    const countSpan = document.createElement('span');
+    countSpan.className = 'dir-file-count';
+    countSpan.textContent = dirData.file_count;
+    info.appendChild(countSpan);
+
+    // Conflict badge — computed from TREE data, not DOM
+    const unresolvedCount = computeUnresolved(dirData.children);
+    const conflictBadge = document.createElement('span');
+    conflictBadge.className = 'dir-conflict-badge';
+    conflictBadge.dataset.total = dirData.conflict_count;
+    conflictBadge.dataset.unresolved = unresolvedCount;
+    if (dirData.conflict_count === 0) {
+        conflictBadge.style.display = 'none';
+    } else if (unresolvedCount > 0) {
+        conflictBadge.className = 'dir-conflict-badge badge bg-warning text-dark';
+        conflictBadge.style.cssText = 'font-size:0.55rem;';
+        conflictBadge.textContent = unresolvedCount;
+    } else {
+        conflictBadge.className = 'dir-conflict-badge badge bg-success';
+        conflictBadge.style.cssText = 'font-size:0.55rem;';
+        conflictBadge.textContent = '\u2713 ' + dirData.conflict_count;
+    }
+    info.appendChild(conflictBadge);
+
+    row.append(chev, icon, nameSpan, info);
+
+    const childrenDiv = document.createElement('div');
+    childrenDiv.className = 'dir-children';
+
+    let populated = false;
+    row.addEventListener('click', () => {
+        const isOpen = childrenDiv.classList.contains('open');
+        if (!isOpen && !populated) {
+            renderNode(dirData.children, childrenDiv, depth + 1, fullPath);
+            populated = true;
+            applyFilters(); // apply current filters to newly rendered items
+        }
+        childrenDiv.classList.toggle('open');
+        chev.classList.toggle('open');
+    });
+
+    wrapper.append(row, childrenDiv);
+    parentEl.appendChild(wrapper);
+}
+
+function renderFile(name, fileData, parentEl, depth) {
+    const item = document.createElement('div');
+    item.className = 'file-item';
+    item.dataset.cat = fileData.category;
+    item.dataset.name = name.toLowerCase();
+    item.dataset.path = fileData.relative_path;
+    item.dataset.resolved = fileData.resolved ? '1' : '0';
+
+    const nameRow = document.createElement('div');
+    nameRow.className = 'file-name-row';
+    nameRow.style.paddingLeft = (8 + depth * 18) + 'px';
+
+    const fchev = document.createElement('span');
+    fchev.className = 'fchev';
+    fchev.innerHTML = '&#9654;';
+    fchev.addEventListener('click', (e) => {
+        e.stopPropagation();
+        fchev.classList.toggle('open');
+        item.querySelector('.ver-block').classList.toggle('open');
+    });
+
+    const doneCheck = document.createElement('input');
+    doneCheck.type = 'checkbox';
+    doneCheck.className = 'done-check';
+    doneCheck.checked = fileData.resolved;
+    doneCheck.title = fileData.resolved ? 'Confirmed — click to unconfirm' : 'Click to confirm this selection';
+    doneCheck.addEventListener('click', (e) => {
+        e.stopPropagation();
+        toggleDone(fileData.relative_path, doneCheck, item);
+    });
+
+    const badge = document.createElement('span');
+    badge.style.cssText = 'font-size:0.55rem;width:44px;';
+    if (fileData.category === 'conflict') {
+        badge.className = 'badge ' + (fileData.resolved ? 'bg-primary' : 'bg-warning text-dark');
+        badge.textContent = fileData.resolved ? 'Done' : 'Review';
+    } else if (fileData.category === 'unique') {
+        badge.className = 'badge bg-success';
+        badge.textContent = 'Unique';
+    } else {
+        badge.className = 'badge bg-info';
+        badge.textContent = 'Same';
+    }
+
+    const fname = document.createElement('span');
+    fname.className = 'fname';
+    fname.title = fileData.relative_path;
+    fname.textContent = name;
+
+    const vcount = document.createElement('span');
+    vcount.style.cssText = 'font-size:0.65rem;color:#555;';
+    vcount.textContent = fileData.num_versions + 'v';
+
+    nameRow.append(fchev, doneCheck, badge, fname, vcount);
+    nameRow.addEventListener('click', () => {
+        loadDetail(fileData.relative_path, item);
+    });
+
+    const verBlock = document.createElement('div');
+    verBlock.className = 'ver-block';
+    verBlock.style.paddingLeft = (depth * 18) + 'px';
+
+    for (const v of fileData.versions) {
+        const vrow = document.createElement('div');
+        vrow.className = 'ver-row';
+        vrow.innerHTML = `
+            <span class="vr-check"><input type="radio" name="sel_${fileData.relative_path}" ${v.selected ? 'checked' : ''}></span>
+            <span class="vr-source">${escHtml(v.source_name)}</span>
+            <span class="vr-size ${v.is_largest ? 'hl-largest' : ''}">${escHtml(v.size)}</span>
+            <span class="vr-lines ${v.is_most_lines ? 'hl-most-lines' : ''}">${v.lines !== null ? v.lines : '-'}</span>
+            <span class="vr-date ${v.is_latest ? 'hl-latest' : ''}">${escHtml(v.modified)}</span>
+            <span class="vr-hash">${escHtml(v.sha_short)}</span>
+        `;
+        vrow.addEventListener('click', (e) => {
+            e.stopPropagation();
+            pickVer(fileData.relative_path, v.index, item);
+        });
+        vrow.querySelector('input[type=radio]').addEventListener('click', (e) => {
+            e.stopPropagation();
+            pickVer(fileData.relative_path, v.index, item);
+        });
+        verBlock.appendChild(vrow);
+    }
+
+    item.append(nameRow, verBlock);
+    parentEl.appendChild(item);
+    allFileElements.push(item);
+}
+
+function escHtml(s) {
+    if (s == null) return '';
+    const d = document.createElement('div');
+    d.textContent = s;
+    return d.innerHTML;
+}
+
+/* ======== UPDATE FILE ITEM IN DOM ======== */
+function updateFileItemDOM(itemEl, resolved) {
+    itemEl.dataset.resolved = resolved ? '1' : '0';
+    const cb = itemEl.querySelector('.done-check');
+    if (cb) {
+        cb.checked = resolved;
+        cb.title = resolved ? 'Confirmed — click to unconfirm' : 'Click to confirm this selection';
+    }
+    const badge = itemEl.querySelector('.file-name-row .badge');
+    if (badge && itemEl.dataset.cat === 'conflict') {
+        badge.className = 'badge ' + (resolved ? 'bg-primary' : 'bg-warning text-dark');
+        badge.style.cssText = 'font-size:0.55rem;width:44px;';
+        badge.textContent = resolved ? 'Done' : 'Review';
+    }
+}
+
+/* ======== DONE CHECKBOX (confirm/unconfirm) ======== */
+function toggleDone(fp, checkbox, itemEl) {
+    fetch('/resolve-toggle', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+        body: 'filepath=' + encodeURIComponent(fp)
+    })
+    .then(r => r.json())
+    .then(data => {
+        updateFileItemDOM(itemEl, data.resolved);
+        if (itemEl.dataset.cat === 'conflict') {
+            markFileResolved(fp, data.resolved);
+        }
+    });
+}
+
+/* ======== ACCEPT ALL DEFAULTS ======== */
+function acceptAllDefaults() {
+    if (!confirm('Mark all unresolved conflicts as resolved with their current default selection?')) return;
+    fetch('/resolve-accept-defaults', { method: 'POST' })
+        .then(r => r.json())
+        .then(data => {
+            // Collect ALL unresolved conflict paths from TREE data (not DOM)
+            const paths = [];
+            collectUnresolvedPaths(TREE, paths);
+            markManyResolved(paths);
+
+            // Update any DOM items that are rendered
+            document.querySelectorAll('.file-item[data-cat="conflict"][data-resolved="0"]').forEach(el => {
+                updateFileItemDOM(el, true);
+            });
+
+            alert('Accepted defaults for ' + data.count + ' conflicts.');
+        });
+}
+
+function collectUnresolvedPaths(node, paths) {
+    for (const val of Object.values(node)) {
+        if (val._type === 'file' && val.category === 'conflict' && !val.resolved) {
+            paths.push(val.relative_path);
+        } else if (val._type === 'dir') {
+            collectUnresolvedPaths(val.children, paths);
+        }
+    }
+}
+
+/* ======== ACCEPT DEFAULTS FOR FOLDER ======== */
+function acceptDefaultsForFolder(prefix, wrapperEl) {
+    fetch('/resolve-accept-defaults', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+        body: 'prefix=' + encodeURIComponent(prefix)
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.count === 0) { alert('No unresolved conflicts in this folder.'); return; }
+
+        // Collect unresolved paths under this prefix from TREE data
+        const dirNode = getTreeNode(prefix);
+        if (dirNode) {
+            const paths = [];
+            collectUnresolvedPaths(dirNode, paths);
+            markManyResolved(paths);
+        }
+
+        // Update any DOM items that are rendered
+        document.querySelectorAll('.file-item[data-cat="conflict"][data-resolved="0"]').forEach(el => {
+            const path = el.dataset.path || '';
+            if (path.startsWith(prefix + '/') || path === prefix) {
+                updateFileItemDOM(el, true);
+            }
+        });
+    });
+}
+
+/* ======== LOAD DETAIL PANEL ======== */
+function loadDetail(fp, el) {
+    if (currentItem) currentItem.querySelector('.file-name-row').classList.remove('active');
+    el.querySelector('.file-name-row').classList.add('active');
+    currentItem = el;
+
+    const ch = el.querySelector('.fchev'), vb = el.querySelector('.ver-block');
+    if (vb && !vb.classList.contains('open')) { ch.classList.add('open'); vb.classList.add('open'); }
+
+    const panel = document.getElementById('detailPanel');
+    panel.innerHTML = '<div class="text-center p-4 text-muted">Loading...</div>';
+    fetch('/api/file-detail/' + fp)
+        .then(r => r.text())
+        .then(html => {
+            panel.innerHTML = html;
+            currentHunkIdx = -1;
+            setTimeout(() => {
+                const d = panel.querySelector('.sbs-row-delete,.sbs-row-insert,.sbs-row-replace');
+                if (d) d.scrollIntoView({block:'center', behavior:'smooth'});
+            }, 50);
+        })
+        .catch(err => { panel.innerHTML = '<div class="text-danger p-4">' + err + '</div>'; });
+}
+
+/* ======== PICK VERSION ======== */
+function pickVer(fp, idx, itemEl) {
+    fetch('/resolve', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+        body: 'filepath=' + encodeURIComponent(fp) + '&selected_index=' + idx + '&next_path='
+    }).then(() => {
+        itemEl.querySelectorAll('.ver-row input[type=radio]').forEach((r, i) => { r.checked = (i === idx); });
+
+        const wasUnresolved = itemEl.dataset.resolved === '0' && itemEl.dataset.cat === 'conflict';
+        updateFileItemDOM(itemEl, true);
+        if (wasUnresolved) {
+            markFileResolved(fp, true);
+        }
+        if (currentItem === itemEl) loadDetail(fp, itemEl);
+    });
+}
+
+/* ======== FILTERS ======== */
+const fC = document.getElementById('fC');
+const fU = document.getElementById('fU');
+const fI = document.getElementById('fI');
+const sI = document.getElementById('searchInput');
+
+function applyFilters() {
+    const s = sI.value.toLowerCase();
+    const show = { conflict: fC.checked, unique: fU.checked, identical: fI.checked };
+
+    document.querySelectorAll('.file-item').forEach(el => {
+        const catOk = show[el.dataset.cat];
+        const nameOk = !s || (el.dataset.name || '').includes(s) || (el.dataset.path || '').toLowerCase().includes(s);
+        el.style.display = (catOk && nameOk) ? '' : 'none';
+    });
+
+    document.querySelectorAll('.dir-wrapper').forEach(dw => {
+        const childContainer = dw.querySelector('.dir-children');
+        if (!childContainer) return;
+        const hasVisibleFile = childContainer.querySelector('.file-item:not([style*="display: none"])');
+        const hasVisibleDir = childContainer.querySelector('.dir-wrapper:not([style*="display: none"])');
+        dw.style.display = (hasVisibleFile || hasVisibleDir || !s) ? '' : 'none';
+    });
+
+    allFileElements = Array.from(document.querySelectorAll('.file-item')).filter(el => el.style.display !== 'none');
+}
+
+fC.addEventListener('change', applyFilters);
+fU.addEventListener('change', applyFilters);
+fI.addEventListener('change', applyFilters);
+sI.addEventListener('input', applyFilters);
+
+/* ======== KEYBOARD NAV ======== */
+document.addEventListener('keydown', function(e) {
+    if (e.target.matches('input,textarea,select')) {
+        if (e.key === 'Escape') e.target.blur();
+        return;
+    }
+    const items = allFileElements.filter(i => i.style.display !== 'none');
+    if (!items.length) return;
+    let idx = currentItem ? items.indexOf(currentItem) : -1;
+
+    if (!e.ctrlKey && (e.key === 'ArrowDown' || e.key === 'j')) {
+        e.preventDefault();
+        idx = Math.min(idx + 1, items.length - 1);
+        loadDetail(items[idx].dataset.path, items[idx]);
+        items[idx].scrollIntoView({block: 'nearest'});
+    } else if (!e.ctrlKey && (e.key === 'ArrowUp' || e.key === 'k')) {
+        e.preventDefault();
+        idx = Math.max(idx - 1, 0);
+        loadDetail(items[idx].dataset.path, items[idx]);
+        items[idx].scrollIntoView({block: 'nearest'});
+    } else if (e.ctrlKey && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+        e.preventDefault();
+        navHunk(e.key === 'ArrowDown' ? 'next' : 'prev');
+    } else if (e.key === 'Enter' && currentItem) {
+        window.open('/conflict/' + currentItem.dataset.path, '_blank');
+    } else if (e.key === '/') {
+        e.preventDefault();
+        sI.focus();
+    } else if (e.key === 'd' && currentItem) {
+        const cb = currentItem.querySelector('.done-check');
+        if (cb) cb.click();
+    }
+});
+
+function navHunk(dir) {
+    const panel = document.getElementById('detailPanel');
+    const all = panel.querySelectorAll('.sbs-row-delete,.sbs-row-insert,.sbs-row-replace');
+    if (!all.length) return;
+    const starts = [];
+    all.forEach(el => {
+        const prev = el.previousElementSibling;
+        if (!prev || !(prev.classList.contains('sbs-row-delete') || prev.classList.contains('sbs-row-insert') || prev.classList.contains('sbs-row-replace')))
+            starts.push(el);
+    });
+    if (dir === 'next') currentHunkIdx = Math.min(currentHunkIdx + 1, starts.length - 1);
+    else currentHunkIdx = Math.max(currentHunkIdx - 1, 0);
+    starts[currentHunkIdx].scrollIntoView({block: 'center', behavior: 'smooth'});
+    starts[currentHunkIdx].style.outline = '2px solid #0d6efd';
+    setTimeout(() => { starts[currentHunkIdx].style.outline = ''; }, 800);
+    const c = panel.querySelector('.diff-counter');
+    if (c) c.textContent = 'Diff ' + (currentHunkIdx + 1) + '/' + starts.length;
+}
+
+/* ======== INIT ======== */
+loadTree();
+</script>
+{% endblock %}

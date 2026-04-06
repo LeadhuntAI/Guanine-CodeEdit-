@@ -1,0 +1,90 @@
+{
+  "name": "relationship_mapper",
+  "description": "Analyzes all explorer summaries to build a cross-area dependency graph, identify shared types, data flows, and suggest area regroupings. Pure reasoning agent with no tool access.",
+  "model": "anthropic/claude-opus-4.6",
+  "system_prompt_file": "prompts/relationship_mapper.md",
+  "tools": [],
+  "max_tokens": 8192,
+  "temperature": 0.2,
+  "output_schema": {
+    "type": "object",
+    "properties": {
+      "edges": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "from_area": {
+              "type": "string",
+              "description": "Area that depends on / imports from another"
+            },
+            "to_area": {
+              "type": "string",
+              "description": "Area being depended on / imported from"
+            },
+            "type": {
+              "type": "string",
+              "enum": ["imports", "extends", "implements", "calls", "configures", "emits_events", "shares_types"],
+              "description": "Kind of dependency relationship"
+            },
+            "details": {
+              "type": "string",
+              "description": "Specific symbols, functions, or types involved in this dependency"
+            }
+          },
+          "required": ["from_area", "to_area", "type", "details"]
+        },
+        "description": "Directed dependency edges between areas"
+      },
+      "shared_types": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "Types, interfaces, or constants used across multiple areas (e.g. 'User', 'Config', 'ErrorCode')"
+      },
+      "data_flows": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string",
+              "description": "Name of the data flow (e.g. 'user-authentication', 'order-processing')"
+            },
+            "path": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Ordered list of areas the data flows through"
+            }
+          },
+          "required": ["name", "path"]
+        },
+        "description": "Multi-area data flows showing how data moves through the system"
+      },
+      "suggested_regroupings": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "enum": ["merge", "split", "move_files"],
+              "description": "Type of regrouping action"
+            },
+            "areas": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Areas involved in the regrouping"
+            },
+            "reason": {
+              "type": "string",
+              "description": "Why this regrouping would improve documentation structure"
+            }
+          },
+          "required": ["action", "areas", "reason"]
+        },
+        "description": "Suggested changes to area boundaries for the next iteration"
+      }
+    },
+    "required": ["edges", "shared_types", "data_flows", "suggested_regroupings"]
+  }
+}

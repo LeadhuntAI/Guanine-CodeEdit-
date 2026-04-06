@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}File Recovery Merger{% endblock %}</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body { font-family: 'Segoe UI', system-ui, sans-serif; }
+        .navbar-brand { font-weight: 700; letter-spacing: -0.5px; }
+        .stat-card { border-radius: 8px; padding: 16px; text-align: center; }
+        .stat-card .number { font-size: 2rem; font-weight: 700; }
+        .stat-card .label { font-size: 0.85rem; opacity: 0.7; }
+        .diff-add { background-color: #1a3d1a; color: #8fdf8f; }
+        .diff-del { background-color: #3d1a1a; color: #df8f8f; }
+        .diff-hdr { color: #6ca6ff; font-weight: bold; }
+        .diff-ctx { color: #888; }
+        .category-auto_unique { color: #20c997; }
+        .category-auto_identical { color: #0dcaf0; }
+        .category-conflict { color: #ffc107; }
+        .resolved-badge { background-color: #198754; }
+        .version-card { border: 2px solid transparent; border-radius: 8px; padding: 12px; cursor: pointer; transition: border-color 0.2s; }
+        .version-card.selected { border-color: #0d6efd; background-color: rgba(13,110,253,0.1); }
+        .version-card:hover { border-color: #6c757d; }
+        pre.diff-view { max-height: 600px; overflow-y: auto; font-size: 0.85rem; padding: 12px; border-radius: 6px; background: #1a1d21; }
+        .file-path { font-family: 'Cascadia Code', 'Consolas', monospace; font-size: 0.9rem; }
+        .flash-message { position: fixed; top: 70px; right: 20px; z-index: 9999; min-width: 300px; }
+        /* Side-by-side diff (git merge style) */
+        .sbs-table { width: 100%; border-collapse: collapse; font-family: 'Cascadia Code', 'Consolas', monospace; font-size: 0.8rem; }
+        .sbs-table td { padding: 0 6px; white-space: pre-wrap; word-break: break-all; vertical-align: top; border-right: 1px solid #2a2d31; }
+        .sbs-table .line-num { width: 45px; min-width: 45px; text-align: right; color: #555; user-select: none; padding-right: 8px; border-right: 1px solid #333; }
+        .sbs-table .line-content { width: 50%; }
+        .sbs-row-equal .line-content { color: #aaa; }
+        .sbs-row-delete .line-content.left { background-color: #3d1a1a; color: #df8f8f; }
+        .sbs-row-insert .line-content.right { background-color: #1a3d1a; color: #8fdf8f; }
+        .sbs-row-replace .line-content.left { background-color: #3d2a1a; color: #dfbf8f; }
+        .sbs-row-replace .line-content.right { background-color: #1a3d2a; color: #8fdfbf; }
+        .sbs-wrapper { max-height: 700px; overflow: auto; }
+        .sbs-gutter { width: 8px; min-width: 8px; background: #1a1d21; }
+        /* Highlight badges for largest / latest / most lines */
+        .hl-largest { background: rgba(13,202,240,0.15); border: 1px solid rgba(13,202,240,0.4); border-radius: 3px; padding: 0 3px; color: #0dcaf0; }
+        .hl-latest  { background: rgba(255,193,7,0.15);  border: 1px solid rgba(255,193,7,0.4);  border-radius: 3px; padding: 0 3px; color: #ffc107; }
+        .hl-most-lines { background: rgba(25,135,84,0.15); border: 1px solid rgba(25,135,84,0.4); border-radius: 3px; padding: 0 3px; color: #198754; }
+        /* File browser */
+        .browser-entry { transition: background-color 0.15s; }
+        .browser-entry:hover { background-color: rgba(255,255,255,0.05); }
+        .browser-dir-icon { color: #ffc107; margin-right: 6px; }
+        .browser-file-icon { color: #6c757d; margin-right: 6px; }
+    </style>
+    {% block extra_css %}{% endblock %}
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark border-bottom">
+        <div class="container-fluid">
+            <a class="navbar-brand" href="/">File Recovery Merger</a>
+            <div class="navbar-nav ms-auto">
+                <a class="nav-link {% if request.path == '/setup' %}active{% endif %}" href="/setup">Setup</a>
+                <a class="nav-link {% if request.path == '/extract-history' %}active{% endif %}" href="/extract-history">Extract History</a>
+                <a class="nav-link {% if request.path == '/browse' %}active{% endif %}" href="/browse">Browse</a>
+                <a class="nav-link {% if request.path == '/inventory' %}active{% endif %}" href="/inventory">Inventory</a>
+                <a class="nav-link {% if '/conflict' in request.path %}active{% endif %}" href="/conflicts">Conflicts</a>
+                <a class="nav-link {% if request.path == '/coverage' %}active{% endif %}" href="/coverage">Coverage</a>
+                <a class="nav-link {% if request.path == '/log' %}active{% endif %}" href="/log">Log</a>
+                <a class="nav-link {% if '/agent' in request.path %}active{% endif %}" href="/agent/sessions">Agent</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container-fluid py-3">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+        {% for category, message in messages %}
+        <div class="alert alert-{{ 'danger' if category == 'error' else category }} alert-dismissible fade show flash-message" role="alert">
+            {{ message }}
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        </div>
+        {% endfor %}
+        {% endif %}
+        {% endwith %}
+
+        {% block content %}{% endblock %}
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+    {% block extra_js %}{% endblock %}
+</body>
+</html>

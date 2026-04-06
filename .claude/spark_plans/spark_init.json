@@ -1,0 +1,19 @@
+{
+  "project_name": "Guanine (CodeEdit)",
+  "description": "A multi-source file recovery and merge tool with a Flask web UI. Scans directories and editor local history (Windsurf, VS Code, Cursor), identifies conflicts between file versions across multiple sources, and lets you review side-by-side diffs and merge into a target directory.",
+  "scope": "medium app",
+  "language": "Python",
+  "framework": "Flask",
+  "database": "SQLite",
+  "package_manager": "pip",
+  "test_runner": "pytest",
+  "structure": "flat",
+  "os": "Windows 11",
+  "shell": "PowerShell",
+  "exclude_patterns": ["sessions"],
+  "invariants": [
+    "No silent file destruction — never delete or overwrite user files without explicit confirmation",
+    "Session data must always be persisted to SQLite, never held only in memory"
+  ],
+  "conventions": []
+}

@@ -1,0 +1,410 @@
+{% extends "base.html" %}
+{% block title %}Merge: {{ filepath }} - File Recovery Merger{% endblock %}
+
+{% block extra_css %}
+<style>
+    .merge-hunk { border: 1px solid #333; border-radius: 6px; margin-bottom: 8px; overflow: hidden; }
+    .hunk-equal { border-color: #2a2d31; }
+    .hunk-conflict { border-color: #ffc107; }
+    .hunk-header { padding: 4px 10px; font-size: 0.75rem; display: flex; justify-content: space-between; align-items: center; }
+    .hunk-equal .hunk-header { background: #1e2225; color: #666; }
+    .hunk-conflict .hunk-header { background: #332b00; color: #ffc107; }
+    .hunk-body { display: flex; }
+    .hunk-side { flex: 1; overflow-x: auto; }
+    .hunk-side-a { border-right: 2px solid #333; }
+    .hunk-lines { font-family: 'Cascadia Code', 'Consolas', monospace; font-size: 0.78rem; white-space: pre-wrap; word-break: break-all; }
+    .hunk-lines .line { padding: 0 8px; min-height: 1.4em; }
+    .hunk-conflict .hunk-side-a .line { background: rgba(220,53,69,0.08); color: #df8f8f; }
+    .hunk-conflict .hunk-side-b .line { background: rgba(25,135,84,0.08); color: #8fdf8f; }
+    .hunk-equal .line { color: #777; }
+    .hunk-pick { cursor: pointer; transition: all 0.15s; }
+    .hunk-pick:hover { filter: brightness(1.3); }
+    .hunk-pick.picked { outline: 2px solid #0d6efd; outline-offset: -2px; }
+    .hunk-pick.picked .line { opacity: 1; }
+    .hunk-pick:not(.picked) .line { opacity: 0.5; }
+    .pick-btn { font-size: 0.7rem; padding: 1px 8px; }
+    .pick-btn.active { background: #0d6efd; border-color: #0d6efd; color: #fff; }
+    .merge-toolbar { position: sticky; top: 0; z-index: 10; background: #212529; padding: 8px 0; border-bottom: 1px solid #333; }
+    .equal-collapsed .hunk-body { display: none; }
+    .equal-collapsed .hunk-header { cursor: pointer; }
+    .equal-collapsed .hunk-header:hover { background: #252830; }
+    .line-num-gutter { display: inline-block; width: 40px; text-align: right; color: #555; user-select: none; padding-right: 6px; margin-right: 4px; border-right: 1px solid #333; }
+    /* Preview panel */
+    .preview-panel { max-height: 500px; overflow: auto; font-family: 'Cascadia Code', 'Consolas', monospace; font-size: 0.78rem; background: #1a1d21; border-radius: 6px; padding: 8px; }
+    .preview-panel .line-new { background: rgba(25,135,84,0.12); }
+    .preview-panel .line-old { background: rgba(220,53,69,0.12); }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="merge-toolbar">
+    <div class="d-flex justify-content-between align-items-center">
+        <div>
+            <h5 class="mb-0 file-path">{{ filepath }}</h5>
+            <small class="text-muted">Merge Editor — pick left or right for each conflict block</small>
+        </div>
+        <div class="d-flex gap-2 align-items-center">
+            <span class="text-muted" style="font-size:0.8rem;">
+                Compare:
+            </span>
+            <select id="selA" class="form-select form-select-sm" style="width:auto; font-size:0.8rem;" onchange="switchPair()">
+                {% for v in versions %}
+                <option value="{{ v.index }}" {{ 'selected' if v.index == idx_a }}>{{ v.source_name }}</option>
+                {% endfor %}
+            </select>
+            <span class="text-muted">vs</span>
+            <select id="selB" class="form-select form-select-sm" style="width:auto; font-size:0.8rem;" onchange="switchPair()">
+                {% for v in versions %}
+                <option value="{{ v.index }}" {{ 'selected' if v.index == idx_b }}>{{ v.source_name }}</option>
+                {% endfor %}
+            </select>
+            <button class="btn btn-sm btn-outline-secondary" onclick="toggleAllEqual()">Toggle Equal Blocks</button>
+            <button class="btn btn-sm btn-outline-info" onclick="pickAllLeft()">All Left</button>
+            <button class="btn btn-sm btn-outline-info" onclick="pickAllRight()">All Right</button>
+            <button class="btn btn-sm btn-outline-light" onclick="toggleEditMode()" id="editToggle">Edit Result</button>
+            <button class="btn btn-sm btn-primary" onclick="saveMerge()" id="saveBtn">Save Merge</button>
+            <a href="/conflict/{{ filepath }}" class="btn btn-sm btn-outline-secondary">Back</a>
+        </div>
+    </div>
+    <div class="d-flex gap-3 mt-1" style="font-size:0.8rem;">
+        <span>Conflicts: <strong id="conflictCount">0</strong></span>
+        <span>Picked: <strong id="pickedCount">0</strong></span>
+        <span id="remainingMsg" class="text-warning"></span>
+    </div>
+</div>
+
+<!-- Source headers -->
+<div class="d-flex border-bottom mb-2" style="font-size:0.85rem; font-weight:600;">
+    <div style="width:50%;" class="px-2 py-1 text-warning">{{ source_a }} (Left)</div>
+    <div style="width:50%;" class="px-2 py-1 text-info border-start">{{ source_b }} (Right)</div>
+</div>
+
+<!-- Hunks -->
+<div id="hunksContainer">
+{% for hunk in hunks %}
+{% if hunk.type == 'equal' %}
+<div class="merge-hunk hunk-equal equal-collapsed" data-hunk-id="{{ hunk.id }}" data-type="equal">
+    <div class="hunk-header" onclick="this.parentElement.classList.toggle('equal-collapsed')">
+        <span>Lines {{ hunk.start_a }}–{{ hunk.start_a + hunk.lines_a|length - 1 }} ({{ hunk.lines_a|length }} lines unchanged)</span>
+        <span style="font-size:0.65rem;">click to expand</span>
+    </div>
+    <div class="hunk-body">
+        <div class="hunk-side hunk-side-a">
+            <div class="hunk-lines">
+                {% for line in hunk.lines_a %}
+                <div class="line"><span class="line-num-gutter">{{ hunk.start_a + loop.index0 }}</span>{{ line | e }}</div>
+                {% endfor %}
+            </div>
+        </div>
+        <div class="hunk-side hunk-side-b">
+            <div class="hunk-lines">
+                {% for line in hunk.lines_b %}
+                <div class="line"><span class="line-num-gutter">{{ hunk.start_b + loop.index0 }}</span>{{ line | e }}</div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+</div>
+
+{% elif hunk.type == 'conflict' %}
+<div class="merge-hunk hunk-conflict" data-hunk-id="{{ hunk.id }}" data-type="conflict" data-pick="">
+    <div class="hunk-header">
+        <span>
+            {% if hunk.tag == 'replace' %}Changed: {{ hunk.lines_a|length }} vs {{ hunk.lines_b|length }} lines
+            {% elif hunk.tag == 'delete' %}Deleted: {{ hunk.lines_a|length }} lines (left only)
+            {% elif hunk.tag == 'insert' %}Inserted: {{ hunk.lines_b|length }} lines (right only)
+            {% endif %}
+        </span>
+        <div class="d-flex gap-1">
+            <button class="btn btn-sm pick-btn btn-outline-warning" onclick="pickHunk({{ hunk.id }}, 'left')">Use Left</button>
+            <button class="btn btn-sm pick-btn btn-outline-info" onclick="pickHunk({{ hunk.id }}, 'right')">Use Right</button>
+            <button class="btn btn-sm pick-btn btn-outline-secondary" onclick="pickHunk({{ hunk.id }}, 'both')">Both</button>
+            <button class="btn btn-sm pick-btn btn-outline-danger" onclick="pickHunk({{ hunk.id }}, 'none')">Neither</button>
+        </div>
+    </div>
+    <div class="hunk-body">
+        <div class="hunk-side hunk-side-a hunk-pick" onclick="pickHunk({{ hunk.id }}, 'left')">
+            <div class="hunk-lines">
+                {% for line in hunk.lines_a %}
+                <div class="line"><span class="line-num-gutter">{{ hunk.start_a + loop.index0 }}</span>{{ line | e }}</div>
+                {% endfor %}
+                {% if not hunk.lines_a %}
+                <div class="line text-muted" style="font-style:italic;">(empty)</div>
+                {% endif %}
+            </div>
+        </div>
+        <div class="hunk-side hunk-side-b hunk-pick" onclick="pickHunk({{ hunk.id }}, 'right')">
+            <div class="hunk-lines">
+                {% for line in hunk.lines_b %}
+                <div class="line"><span class="line-num-gutter">{{ hunk.start_b + loop.index0 }}</span>{{ line | e }}</div>
+                {% endfor %}
+                {% if not hunk.lines_b %}
+                <div class="line text-muted" style="font-style:italic;">(empty)</div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+{% endfor %}
+</div>
+
+<!-- Edit Mode: full text editor for the merged result -->
+<div id="editPanel" style="display:none;">
+    <div class="card">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <div>
+                <strong>Edit Merged Result</strong>
+                <small class="text-muted ms-2">Make any changes you need, then save</small>
+            </div>
+            <div class="d-flex gap-2 align-items-center" style="font-size:0.8rem;">
+                <span class="text-muted">Line <strong id="editorLine">1</strong>, Col <strong id="editorCol">1</strong></span>
+                <span class="text-muted ms-2"><strong id="editorLineCount">0</strong> lines</span>
+            </div>
+        </div>
+        <div class="card-body p-0">
+            <textarea id="mergeEditor" spellcheck="false"
+                      style="width:100%; min-height:600px; background:#1a1d21; color:#ccc; border:none; padding:12px;
+                             font-family:'Cascadia Code','Consolas',monospace; font-size:0.82rem; resize:vertical;
+                             tab-size:4; line-height:1.5; outline:none;"
+                      oninput="onEditorChange()" onclick="updateEditorPos()" onkeyup="updateEditorPos()"></textarea>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// Store hunk data for building merged content
+const HUNKS = {{ hunks | tojson }};
+const FILEPATH = {{ filepath | tojson }};
+let picks = {};  // hunkId -> 'left' | 'right' | 'both' | 'none'
+
+function pickHunk(id, side) {
+    picks[id] = side;
+    const el = document.querySelector(`[data-hunk-id="${id}"]`);
+    el.dataset.pick = side;
+
+    // Update button styles
+    el.querySelectorAll('.pick-btn').forEach(b => b.classList.remove('active'));
+    const labels = {'left': 'Use Left', 'right': 'Use Right', 'both': 'Both', 'none': 'Neither'};
+    el.querySelectorAll('.pick-btn').forEach(b => {
+        if (b.textContent.trim() === labels[side]) b.classList.add('active');
+    });
+
+    // Update pick visual on sides
+    const sideA = el.querySelector('.hunk-side-a');
+    const sideB = el.querySelector('.hunk-side-b');
+    sideA.classList.remove('picked');
+    sideB.classList.remove('picked');
+    if (side === 'left' || side === 'both') sideA.classList.add('picked');
+    if (side === 'right' || side === 'both') sideB.classList.add('picked');
+
+    updateCounts();
+}
+
+function pickAllLeft() {
+    HUNKS.forEach(h => { if (h.type === 'conflict') pickHunk(h.id, 'left'); });
+}
+
+function pickAllRight() {
+    HUNKS.forEach(h => { if (h.type === 'conflict') pickHunk(h.id, 'right'); });
+}
+
+function updateCounts() {
+    const conflicts = HUNKS.filter(h => h.type === 'conflict');
+    const picked = conflicts.filter(h => picks[h.id]);
+    document.getElementById('conflictCount').textContent = conflicts.length;
+    document.getElementById('pickedCount').textContent = picked.length;
+    const remaining = conflicts.length - picked.length;
+    const msg = document.getElementById('remainingMsg');
+    if (remaining > 0) {
+        msg.textContent = `${remaining} conflict${remaining > 1 ? 's' : ''} remaining`;
+        msg.className = 'text-warning';
+    } else if (conflicts.length > 0) {
+        msg.textContent = 'All conflicts resolved!';
+        msg.className = 'text-success';
+    } else {
+        msg.textContent = 'No conflicts — files are identical';
+        msg.className = 'text-muted';
+    }
+}
+
+function buildMergedContent() {
+    const lines = [];
+    for (const hunk of HUNKS) {
+        if (hunk.type === 'equal') {
+            lines.push(...hunk.lines_a);
+        } else if (hunk.type === 'conflict') {
+            const pick = picks[hunk.id];
+            if (!pick) {
+                return null;  // unpicked conflict
+            }
+            if (pick === 'left') lines.push(...hunk.lines_a);
+            else if (pick === 'right') lines.push(...hunk.lines_b);
+            else if (pick === 'both') { lines.push(...hunk.lines_a); lines.push(...hunk.lines_b); }
+            // 'none' = skip both
+        }
+    }
+    return lines.join('\n') + '\n';
+}
+
+// ======== EDIT MODE ========
+let editMode = false;
+let editorDirty = false;
+
+function toggleEditMode() {
+    editMode = !editMode;
+    const hunksEl = document.getElementById('hunksContainer');
+    const editEl = document.getElementById('editPanel');
+    const toggle = document.getElementById('editToggle');
+
+    if (editMode) {
+        // Build merged content from picks and load into editor
+        const content = buildMergedContent();
+        if (content === null) {
+            const conflicts = HUNKS.filter(h => h.type === 'conflict');
+            const unpicked = conflicts.filter(h => !picks[h.id]);
+            if (unpicked.length > 0) {
+                alert(`Pick left/right for all ${unpicked.length} conflict(s) first, then switch to edit mode.`);
+                editMode = false;
+                return;
+            }
+        }
+        const editor = document.getElementById('mergeEditor');
+        editor.value = content;
+        editorDirty = false;
+        onEditorChange();
+        hunksEl.style.display = 'none';
+        editEl.style.display = 'block';
+        toggle.textContent = 'Hunk View';
+        toggle.classList.remove('btn-outline-light');
+        toggle.classList.add('btn-outline-warning');
+        editor.focus();
+    } else {
+        hunksEl.style.display = '';
+        editEl.style.display = 'none';
+        toggle.textContent = 'Edit Result';
+        toggle.classList.remove('btn-outline-warning');
+        toggle.classList.add('btn-outline-light');
+    }
+}
+
+function onEditorChange() {
+    editorDirty = true;
+    const editor = document.getElementById('mergeEditor');
+    const lines = editor.value.split('\n');
+    document.getElementById('editorLineCount').textContent = lines.length;
+    updateEditorPos();
+}
+
+function updateEditorPos() {
+    const editor = document.getElementById('mergeEditor');
+    const pos = editor.selectionStart;
+    const text = editor.value.substring(0, pos);
+    const line = text.split('\n').length;
+    const col = pos - text.lastIndexOf('\n');
+    document.getElementById('editorLine').textContent = line;
+    document.getElementById('editorCol').textContent = col;
+}
+
+// Handle Tab key in editor (insert tab instead of switching focus)
+document.addEventListener('keydown', function(e) {
+    if (e.target.id === 'mergeEditor' && e.key === 'Tab') {
+        e.preventDefault();
+        const editor = e.target;
+        const start = editor.selectionStart;
+        const end = editor.selectionEnd;
+        editor.value = editor.value.substring(0, start) + '    ' + editor.value.substring(end);
+        editor.selectionStart = editor.selectionEnd = start + 4;
+        onEditorChange();
+    }
+});
+
+// ======== SAVE ========
+function getContent() {
+    if (editMode) {
+        return document.getElementById('mergeEditor').value;
+    }
+    return buildMergedContent();
+}
+
+function saveMerge() {
+    let content;
+    if (editMode) {
+        content = document.getElementById('mergeEditor').value;
+    } else {
+        const conflicts = HUNKS.filter(h => h.type === 'conflict');
+        const unpicked = conflicts.filter(h => !picks[h.id]);
+        if (unpicked.length > 0) {
+            alert(`${unpicked.length} conflict(s) not yet resolved. Pick left/right for each before saving.`);
+            const el = document.querySelector(`[data-hunk-id="${unpicked[0].id}"]`);
+            if (el) el.scrollIntoView({block: 'center', behavior: 'smooth'});
+            return;
+        }
+        content = buildMergedContent();
+        if (content === null) return;
+    }
+
+    const btn = document.getElementById('saveBtn');
+    btn.disabled = true;
+    btn.textContent = 'Saving...';
+
+    fetch('/api/save-merge', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({filepath: FILEPATH, content: content}),
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.ok) {
+            editorDirty = false;
+            btn.textContent = 'Saved!';
+            btn.classList.remove('btn-primary');
+            btn.classList.add('btn-success');
+            setTimeout(() => {
+                window.location.href = '/conflict/' + encodeURI(FILEPATH);
+            }, 800);
+        } else {
+            alert('Error: ' + (data.error || 'Unknown'));
+            btn.disabled = false;
+            btn.textContent = 'Save Merge';
+        }
+    })
+    .catch(err => {
+        alert('Error saving: ' + err);
+        btn.disabled = false;
+        btn.textContent = 'Save Merge';
+    });
+}
+
+function switchPair() {
+    const a = document.getElementById('selA').value;
+    const b = document.getElementById('selB').value;
+    window.location.href = '/merge/' + encodeURI(FILEPATH) + '?a=' + a + '&b=' + b;
+}
+
+function toggleAllEqual() {
+    document.querySelectorAll('.hunk-equal').forEach(el => {
+        el.classList.toggle('equal-collapsed');
+    });
+}
+
+// Keyboard shortcuts
+document.addEventListener('keydown', function(e) {
+    if (e.ctrlKey && e.key === 's') { e.preventDefault(); saveMerge(); }
+    if (e.target.matches('select, input, textarea')) return;
+});
+
+// Warn before leaving with unsaved edits
+window.addEventListener('beforeunload', function(e) {
+    if (editMode && editorDirty) {
+        e.preventDefault();
+        e.returnValue = '';
+    }
+});
+
+// Init counts
+updateCounts();
+</script>
+{% endblock %}

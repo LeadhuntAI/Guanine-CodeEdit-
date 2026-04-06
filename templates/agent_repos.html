@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+{% block title %}Agent Repos{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-lg-8">
+        <h3>Registered Repositories</h3>
+        <p class="text-muted">Repos that agents can work on. Each agent session creates an isolated workspace.</p>
+
+        {% if repos %}
+        <div class="table-responsive">
+            <table class="table table-hover">
+                <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th>Path</th>
+                        <th>Files</th>
+                        <th>Free Commands</th>
+                        <th>Registered</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for repo in repos %}
+                    <tr>
+                        <td><strong>{{ repo.repo_name }}</strong></td>
+                        <td class="file-path text-muted" style="max-width:400px; overflow:hidden; text-overflow:ellipsis;">{{ repo.repo_path }}</td>
+                        <td>{{ repo.file_count or '-' }}</td>
+                        <td>
+                            {% if repo.allow_free_commands %}
+                            <span class="badge bg-warning">Yes</span>
+                            {% else %}
+                            <span class="badge bg-secondary">No</span>
+                            {% endif %}
+                        </td>
+                        <td>{{ repo.registered_at[:10] if repo.registered_at else '-' }}</td>
+                        <td>
+                            <a href="{{ url_for('agent.repo_settings', repo_id=repo.repo_id) }}" class="btn btn-sm btn-outline-secondary">Settings</a>
+                            <form method="post" action="{{ url_for('agent.delete_repo', repo_id=repo.repo_id) }}" class="d-inline" onsubmit="return confirm('Delete this repo and all its sessions?')">
+                                <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
+                            </form>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="alert alert-info">No repos registered yet. Add one below.</div>
+        {% endif %}
+
+        {% if editing %}
+        <div class="card mt-4">
+            <div class="card-header"><h5>Edit: {{ editing.repo_name }}</h5></div>
+            <div class="card-body">
+                <form method="post" action="{{ url_for('agent.repo_settings', repo_id=editing.repo_id) }}">
+                    <div class="mb-3">
+                        <label class="form-label">Repo Name</label>
+                        <input type="text" name="repo_name" class="form-control" value="{{ editing.repo_name }}">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Allowed Commands (one per line)</label>
+                        <textarea name="allowed_commands" class="form-control font-monospace" rows="4" placeholder="pytest tests/&#10;python -m mypy">{{ editing.allowed_commands | join('\n') }}</textarea>
+                        <div class="form-text">Commands agents are permitted to run. Agent commands must start with one of these.</div>
+                    </div>
+                    <div class="mb-3 form-check">
+                        <input type="checkbox" name="allow_free_commands" class="form-check-input" id="freeCmd" {{ 'checked' if editing.allow_free_commands }}>
+                        <label class="form-check-label" for="freeCmd">Allow free command execution (agents can run any command)</label>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Ignore Patterns (one per line)</label>
+                        <textarea name="ignore_patterns" class="form-control font-monospace" rows="3" placeholder=".git&#10;node_modules&#10;__pycache__">{{ editing.ignore_patterns | join('\n') }}</textarea>
+                    </div>
+                    <button type="submit" class="btn btn-primary">Save Settings</button>
+                    <a href="{{ url_for('agent.repos') }}" class="btn btn-secondary">Cancel</a>
+                </form>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+
+    <div class="col-lg-4">
+        <div class="card">
+            <div class="card-header"><h5>Register New Repo</h5></div>
+            <div class="card-body">
+                <form method="post" action="{{ url_for('agent.repos') }}">
+                    <div class="mb-3">
+                        <label class="form-label">Repository Path</label>
+                        <input type="text" name="repo_path" class="form-control font-monospace" required placeholder="C:\Projects\MyProject">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Display Name</label>
+                        <input type="text" name="repo_name" class="form-control" placeholder="Auto-detected from folder name">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Allowed Commands (one per line)</label>
+                        <textarea name="allowed_commands" class="form-control font-monospace" rows="3" placeholder="pytest tests/&#10;npm test"></textarea>
+                    </div>
+                    <div class="mb-3 form-check">
+                        <input type="checkbox" name="allow_free_commands" class="form-check-input" id="freeCmdNew">
+                        <label class="form-check-label" for="freeCmdNew">Allow free commands</label>
+                    </div>
+                    <button type="submit" class="btn btn-success">Register Repo</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

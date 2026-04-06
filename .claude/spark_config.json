@@ -1,0 +1,17 @@
+{
+  "api_key": "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",
+  "models": {
+    "planner": "anthropic/claude-opus-4.6",
+    "explorer": "moonshotai/kimi-k2.5",
+    "relationship_mapper": "anthropic/claude-opus-4.6",
+    "doc_writer": "z-ai/glm-5-turbo",
+    "onboarding": "anthropic/claude-opus-4.6",
+    "library": "anthropic/claude-opus-4.6"
+  },
+  "iterations": 3,
+  "max_concurrent_workers": 10,
+  "target_dir": "C:\\Projects\\360Marketing\\Guanine(CodeEdit)",
+  "mode": "fresh",
+  "exclude_patterns": [],
+  "code_index": true
+}

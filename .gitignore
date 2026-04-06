@@ -1,0 +1,13 @@
+sessions/
+.merger_config.json
+.merger_state.json
+merge_log_*.json
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+.code-index/
+0.12.0

@@ -1,0 +1,112 @@
+[
+  {
+    "id": "agent-memory",
+    "name": "Agent Memory",
+    "description": "Persistent memory system that lets agents recall past conversations, decisions, and context across sessions. Prevents repeated analysis and enables learning from past interactions.",
+    "category": "memory",
+    "target": "repo",
+    "tags": ["memory", "persistence", "context", "recall", "learning"],
+    "repo_url": "https://github.com/LeadhuntAI/agent-memory.git",
+    "version": "main",
+    "author": "LeadhuntAI",
+    "pros": [
+      "Agents remember past decisions and avoid repeating mistakes",
+      "Lightweight SQLite-based storage, no external dependencies",
+      "Namespace-based isolation — each agent gets its own memory space",
+      "Automatic relevance scoring for memory retrieval"
+    ],
+    "cons": [
+      "Adds disk storage overhead (SQLite file per project)",
+      "Memory retrieval adds slight latency to each agent turn",
+      "Requires periodic memory cleanup to stay effective"
+    ],
+    "config_options": {
+      "apply_to": {
+        "type": "string",
+        "default": "all",
+        "choices": ["all", "select"],
+        "description": "Which agents get memory capability — all agents or select specific ones"
+      },
+      "memory_backend": {
+        "type": "string",
+        "default": "sqlite",
+        "choices": ["sqlite", "json"],
+        "description": "Storage backend — SQLite for performance, JSON for simplicity"
+      }
+    },
+    "integration": {
+      "install_paths": {
+        "rules": "{platform_dir}/rules/plugins/",
+        "skills": "{platform_dir}/skills/"
+      },
+      "files_to_copy": [
+        {"src": "spark-plugin/rules/memory-system.md", "dst": "rules/plugins/memory-system.md"},
+        {"src": "spark-plugin/skills/memory-recall/SKILL.md", "dst": "skills/memory-recall/SKILL.md"}
+      ],
+      "rules_index_entries": [
+        {
+          "entry_path": "rules/plugins/memory-system.md",
+          "summary": "Agent memory system — persistent storage and recall of context across sessions",
+          "section": "Plugin Rules"
+        }
+      ],
+      "post_install_message": "Memory system installed. Agents will discover it via RULES_INDEX.md and can use the memory-recall skill."
+    }
+  },
+  {
+    "id": "brain-memory",
+    "name": "BRAIN Memory System",
+    "target": "repo",
+    "description": "Semantic long-term memory with hybrid routing, vector search, and tenant isolation. Gives coding agents persistent recall across sessions via MCP or REST API.",
+    "category": "memory",
+    "tags": ["memory", "semantic-search", "vector-db", "persistence", "brain"],
+    "repo_url": "https://github.com/LeadhuntAI/BRAIN.git",
+    "version": "main",
+    "author": "LeadhuntAI",
+    "pros": [
+      "Semantic search finds relevant memories by meaning, not just keywords",
+      "Hybrid routing automatically categorizes memories into brain areas",
+      "Tenant-isolated — safe for multi-user setups",
+      "Integrates with jCodeMunch for unified code + memory search",
+      "MCP server for native Claude Code integration"
+    ],
+    "cons": [
+      "Requires Qdrant vector DB (local mode or Docker)",
+      "sentence-transformers dependency (~400MB for embedding model)",
+      "Heavier setup than simple file-based memory systems"
+    ],
+    "config_options": {
+      "qdrant_mode": {
+        "type": "string",
+        "default": "local",
+        "choices": ["local", "server"],
+        "description": "Qdrant storage mode — local (embedded, no Docker) or server (Docker)"
+      }
+    },
+    "integration": {
+      "install_paths": {
+        "rules": "{platform_dir}/rules/plugins/",
+        "skills": "{platform_dir}/skills/"
+      },
+      "files_to_copy": [
+        {"src": "spark-plugin/rules/brain-memory.md", "dst": "rules/plugins/brain-memory.md"},
+        {"src": "spark-plugin/skills/memory/SKILL.md", "dst": "skills/memory/SKILL.md"}
+      ],
+      "rules_index_entries": [
+        {
+          "entry_path": "rules/plugins/brain-memory.md",
+          "summary": "BRAIN memory system — semantic long-term memory with hybrid routing for coding agents",
+          "section": "Plugin Rules"
+        }
+      ],
+      "mcp_config": {
+        "brain": {
+          "command": "python",
+          "args": ["-m", "brain_blueprint.api_src.mcp_server"],
+          "env": {"BRAIN_QDRANT_MODE": "local"}
+        }
+      },
+      "post_install_message": "BRAIN memory installed. Start the server with: python -m brain_blueprint.api_src.mcp_server"
+    }
+  }
+]

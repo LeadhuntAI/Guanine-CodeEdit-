@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "jcodemunch": {
+      "command": "C:\\Projects\\360Marketing\\Guanine(CodeEdit)\\.venv\\Scripts\\python.exe",
+      "args": [
+        "-m",
+        "jcodemunch_mcp.server",
+        "--storage",
+        "C:\\Projects\\360Marketing\\Guanine(CodeEdit)\\.code-index"
+      ],
+      "env": {
+        "PYTHONPATH": "C:\\Projects\\360Marketing\\Guanine(CodeEdit)\\spark\\vendors\\jcodemunch\\src"
+      }
+    }
+  }
+}

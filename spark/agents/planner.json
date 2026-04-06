@@ -1,0 +1,48 @@
+{
+  "name": "planner",
+  "description": "Scans repository file structure and organizes it into logical areas for documentation. Produces an area plan with priorities that guides explorer agents.",
+  "model": "anthropic/claude-opus-4.6",
+  "system_prompt_file": "prompts/planner.md",
+  "tools": ["get_file_tree", "list_directory", "read_file", "code_search"],
+  "max_tokens": 8192,
+  "temperature": 0.2,
+  "output_schema": {
+    "type": "object",
+    "properties": {
+      "areas": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string",
+              "description": "Short kebab-case identifier for the area (e.g. 'auth-module', 'api-routes')"
+            },
+            "description": {
+              "type": "string",
+              "description": "One-sentence description of what this area contains"
+            },
+            "file_patterns": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Glob patterns matching files in this area (e.g. 'src/auth/**/*.py')"
+            },
+            "priority": {
+              "type": "integer",
+              "description": "Documentation priority: 1 = highest (core/critical), 2 = medium, 3 = low (config/boilerplate)",
+              "minimum": 1,
+              "maximum": 3
+            }
+          },
+          "required": ["name", "description", "file_patterns", "priority"]
+        },
+        "description": "Logical areas of the codebase to explore and document"
+      },
+      "rationale": {
+        "type": "string",
+        "description": "Explanation of how areas were chosen and why boundaries were drawn where they are"
+      }
+    },
+    "required": ["areas", "rationale"]
+  }
+}

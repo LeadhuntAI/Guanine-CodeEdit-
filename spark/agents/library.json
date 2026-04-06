@@ -1,0 +1,20 @@
+{
+  "name": "library",
+  "description": "Interactive plugin browser that helps users discover, evaluate, and install Spark plugins from the library catalog",
+  "model": "anthropic/claude-opus-4.6",
+  "system_prompt_file": "prompts/library.md",
+  "tools": [
+    "list_library",
+    "search_library",
+    "get_plugin_details",
+    "install_plugin",
+    "ask_user",
+    "read_file",
+    "write_file",
+    "update_rules_index",
+    "get_file_tree"
+  ],
+  "max_tokens": 8192,
+  "temperature": 0.3,
+  "max_iterations": 30
+}

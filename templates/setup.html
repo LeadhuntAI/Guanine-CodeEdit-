@@ -1,0 +1,208 @@
+{% extends "base.html" %}
+{% block title %}Setup - File Recovery Merger{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-lg-8">
+
+        {% if has_saved_state %}
+        <!-- Restored session banner -->
+        <div class="alert alert-success d-flex justify-content-between align-items-center mb-4">
+            <div>
+                <strong>Session restored!</strong>
+                <span class="ms-2" style="font-size:0.85rem;">
+                    {{ saved_stats.total }} files loaded &middot;
+                    {{ saved_stats.conflicts }} conflicts ({{ saved_stats.resolved }} resolved)
+                    {% if current_session %}&middot; session {{ current_session }}{% endif %}
+                    {% if config_saved_at %}&middot; saved {{ config_saved_at }}{% endif %}
+                </span>
+            </div>
+            <div class="d-flex gap-2">
+                <a href="/browse" class="btn btn-sm btn-success">Resume Browsing</a>
+                <a href="/conflicts" class="btn btn-sm btn-outline-light">Resume Conflicts</a>
+                <a href="/inventory" class="btn btn-sm btn-outline-light">Inventory</a>
+            </div>
+        </div>
+        {% elif config_saved_at %}
+        <div class="alert alert-info mb-4" style="font-size:0.85rem;">
+            Configuration loaded from session {{ current_session }} (saved {{ config_saved_at }}). Paths are pre-filled below.
+        </div>
+        {% endif %}
+
+        <!-- Session Manager -->
+        <div class="card mb-4">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">Sessions</h5>
+                <a href="/session/new" class="btn btn-sm btn-outline-primary">+ New Session</a>
+            </div>
+            <div class="card-body p-2">
+                {% if all_sessions %}
+                <div class="table-responsive">
+                    <table class="table table-sm table-hover mb-0" style="font-size:0.82rem;">
+                        <thead>
+                            <tr>
+                                <th>Session</th>
+                                <th>Sources</th>
+                                <th>Files</th>
+                                <th>Conflicts</th>
+                                <th>Updated</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for s in all_sessions %}
+                            <tr class="{{ 'table-active' if s.id == current_session }}">
+                                <td>
+                                    {% if s.id == current_session %}
+                                    <strong>{{ s.name or s.id }}</strong>
+                                    <span class="badge bg-primary" style="font-size:0.6rem;">Active</span>
+                                    {% else %}
+                                    {{ s.name or s.id }}
+                                    {% endif %}
+                                </td>
+                                <td>{{ s.sources|join(', ') if s.sources else '-' }}</td>
+                                <td>{{ s.stats.total if s.stats else '-' }}</td>
+                                <td>
+                                    {% if s.stats %}
+                                    {{ s.stats.conflicts }}
+                                    {% if s.stats.resolved < s.stats.conflicts %}
+                                    <span class="text-warning">({{ s.stats.conflicts - s.stats.resolved }} open)</span>
+                                    {% else %}
+                                    <span class="text-success">all done</span>
+                                    {% endif %}
+                                    {% else %}-{% endif %}
+                                </td>
+                                <td>{{ s.updated_at[:16].replace('T', ' ') if s.updated_at else '-' }}</td>
+                                <td class="text-end">
+                                    {% if s.id != current_session %}
+                                    <a href="/session/switch/{{ s.id }}" class="btn btn-sm btn-outline-primary py-0" style="font-size:0.7rem;">Load</a>
+                                    <a href="/session/delete/{{ s.id }}" class="btn btn-sm btn-outline-danger py-0" style="font-size:0.7rem;"
+                                       onclick="return confirm('Delete session {{ s.id }}? This cannot be undone.')">Del</a>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <p class="text-muted mb-0 p-2" style="font-size:0.85rem;">No saved sessions yet. Configure sources below and start a scan.</p>
+                {% endif %}
+            </div>
+        </div>
+
+        <h2 class="mb-4">Source Configuration</h2>
+        <p class="text-muted mb-4">Configure your source directories and target folder. Each source will be scanned and files compared across all sources.</p>
+
+        <form method="POST" action="/setup" id="setupForm">
+            <!-- Optional session name -->
+            <div class="mb-3">
+                <label class="form-label small text-muted">Session Name (optional)</label>
+                <input type="text" class="form-control form-control-sm" name="session_name"
+                       value="{{ all_sessions[0].name if all_sessions and all_sessions[0].id == current_session else '' }}"
+                       placeholder="e.g. 360Marketing Recovery">
+            </div>
+
+            <div class="card mb-4">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0">Source Directories</h5>
+                    <button type="button" class="btn btn-sm btn-outline-primary" onclick="addSource()">+ Add Source</button>
+                </div>
+                <div class="card-body" id="sourcesContainer">
+                    {% for src in sources %}
+                    <div class="source-entry mb-3 p-3 border rounded" id="source_{{ loop.index0 }}">
+                        <div class="d-flex justify-content-between align-items-start mb-2">
+                            <span class="badge bg-secondary">Priority {{ loop.index }}</span>
+                            {% if loop.index0 > 0 %}
+                            <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeSource({{ loop.index0 }})">Remove</button>
+                            {% endif %}
+                        </div>
+                        <div class="row g-2">
+                            <div class="col-md-3">
+                                <label class="form-label small">Name</label>
+                                <input type="text" class="form-control" name="source_name_{{ loop.index0 }}" value="{{ src.name }}" placeholder="Source name" required>
+                            </div>
+                            <div class="col-md-9">
+                                <label class="form-label small">Path</label>
+                                <input type="text" class="form-control file-path" name="source_path_{{ loop.index0 }}" value="{{ src.path }}" placeholder="C:\path\to\source\directory" required>
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h5 class="mb-0">Target Directory</h5>
+                </div>
+                <div class="card-body">
+                    <p class="text-muted small">Where merged files will be copied to. This should be a clean directory.</p>
+                    <input type="text" class="form-control file-path" name="target_dir" value="{{ target_dir }}" placeholder="C:\path\to\merged\output" required>
+                </div>
+            </div>
+
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h5 class="mb-0">Editor History Project Filter</h5>
+                </div>
+                <div class="card-body">
+                    <p class="text-muted small">If any source is a Windsurf/VS Code history folder (auto-detected), only include files whose original path starts with this project folder. Leave empty to include all files.</p>
+                    <input type="text" class="form-control file-path" name="project_filter" value="{{ project_filter }}" placeholder="C:\Projects\360Marketing\360marketing">
+                </div>
+            </div>
+
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h5 class="mb-0">Ignore Patterns</h5>
+                </div>
+                <div class="card-body">
+                    <p class="text-muted small">Comma-separated list of directory/file names to skip during scanning.</p>
+                    <textarea class="form-control" name="ignore_patterns" rows="2">{{ ignore_patterns }}</textarea>
+                </div>
+            </div>
+
+            <div class="d-grid">
+                <button type="submit" class="btn btn-primary btn-lg">Start Scan</button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+let sourceCount = {{ sources|length }};
+
+function addSource() {
+    const container = document.getElementById('sourcesContainer');
+    const idx = sourceCount;
+    const div = document.createElement('div');
+    div.className = 'source-entry mb-3 p-3 border rounded';
+    div.id = `source_${idx}`;
+    div.innerHTML = `
+        <div class="d-flex justify-content-between align-items-start mb-2">
+            <span class="badge bg-secondary">Priority ${idx + 1}</span>
+            <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeSource(${idx})">Remove</button>
+        </div>
+        <div class="row g-2">
+            <div class="col-md-3">
+                <label class="form-label small">Name</label>
+                <input type="text" class="form-control" name="source_name_${idx}" placeholder="Source name" required>
+            </div>
+            <div class="col-md-9">
+                <label class="form-label small">Path</label>
+                <input type="text" class="form-control file-path" name="source_path_${idx}" placeholder="C:\\path\\to\\source\\directory" required>
+            </div>
+        </div>
+    `;
+    container.appendChild(div);
+    sourceCount++;
+}
+
+function removeSource(idx) {
+    const el = document.getElementById(`source_${idx}`);
+    if (el) el.remove();
+}
+</script>
+{% endblock %}
