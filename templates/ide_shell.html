@@ -452,25 +452,39 @@ html, body { margin: 0; padding: 0; height: 100%; overflow: hidden;
 
 /* Input area */
 .chat-input-area {
-    padding: 8px 10px; border-top: 1px solid #2d2d2d; flex-shrink: 0;
-    background: #1a1d24;
+    padding: 10px 12px; border-top: 1px solid #2d2d2d; flex-shrink: 0;
+    background: #181b20;
 }
-.chat-input-row { display: flex; gap: 6px; align-items: flex-end; }
+.chat-input-box {
+    background: #1e2228; border: 1px solid #333; border-radius: 12px;
+    display: flex; flex-direction: column; overflow: hidden;
+    transition: border-color 0.15s;
+}
+.chat-input-box:focus-within { border-color: #5865f2; }
 .chat-input {
-    flex: 1; background: #252a32; color: #ddd; border: 1px solid #333;
-    border-radius: 6px; padding: 8px 10px; font-size: 0.76rem;
-    font-family: inherit; resize: none; outline: none;
-    max-height: 120px; line-height: 1.4;
+    background: transparent; color: #ddd; border: none;
+    padding: 12px 14px 4px 14px; font-size: 0.82rem;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    resize: none; outline: none;
+    min-height: 60px; max-height: 180px; line-height: 1.5;
+    width: 100%; box-sizing: border-box;
 }
-.chat-input:focus { border-color: #0d6efd; }
-.chat-input::placeholder { color: #555; }
+.chat-input::placeholder { color: #555; font-size: 0.78rem; }
+.chat-input-footer {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 4px 8px 8px 14px;
+}
+.chat-input-hint {
+    font-size: 0.6rem; color: #444; letter-spacing: 0.3px;
+}
 .chat-send-btn {
-    background: #0d6efd; color: #fff; border: none; border-radius: 6px;
-    width: 34px; height: 34px; cursor: pointer; display: flex;
+    background: #5865f2; color: #fff; border: none; border-radius: 8px;
+    width: 32px; height: 28px; cursor: pointer; display: flex;
     align-items: center; justify-content: center; flex-shrink: 0;
+    transition: background 0.15s;
 }
-.chat-send-btn:hover { background: #2b7fff; }
-.chat-send-btn:disabled { background: #333; color: #666; cursor: not-allowed; }
+.chat-send-btn:hover { background: #6d78f7; }
+.chat-send-btn:disabled { background: #333; color: #555; cursor: not-allowed; }
 
 /* ================================================================
    STATUS BAR
@@ -4892,7 +4906,7 @@ function chatInputKeydown(e) {
 
 function chatAutoResize(el) {
     el.style.height = 'auto';
-    el.style.height = Math.min(el.scrollHeight, 120) + 'px';
+    el.style.height = Math.max(60, Math.min(el.scrollHeight, 180)) + 'px';
 }
 
 function chatAbort() {

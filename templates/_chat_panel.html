@@ -32,12 +32,17 @@
     </div>
   </div>
 
-  {# Input area #}
+  {# Input area — Windsurf-style box with embedded send button #}
   <div class="chat-input-area">
-    <textarea id="chatInput" class="chat-input" placeholder="Type a message..." rows="1"
-              onkeydown="chatInputKeydown(event)" oninput="chatAutoResize(this)"></textarea>
-    <button class="chat-send-btn" onclick="chatSend()" title="Send (Enter)">
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2 8l10-5-3 5 3 5z" fill="currentColor"/></svg>
-    </button>
+    <div class="chat-input-box">
+      <textarea id="chatInput" class="chat-input" placeholder="Ask anything... (Enter to send, Shift+Enter for newline)" rows="3"
+                onkeydown="chatInputKeydown(event)" oninput="chatAutoResize(this)"></textarea>
+      <div class="chat-input-footer">
+        <span class="chat-input-hint" id="chatInputHint">OpenCode &middot; GLM 5.1</span>
+        <button class="chat-send-btn" id="chatSendBtn" onclick="chatSend()" title="Send (Enter)">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M3 13V3l10 5-10 5z" fill="currentColor"/></svg>
+        </button>
+      </div>
+    </div>
   </div>
 </div>
