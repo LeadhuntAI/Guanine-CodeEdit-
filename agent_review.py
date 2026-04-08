@@ -72,6 +72,20 @@ DEFAULT_CODING_MODELS = [
 ]
 DEFAULT_MODEL_ID = 'glm-5.1'
 
+_SANDBOX_PREFIX = """[SYSTEM] You are working inside Guanine's sandboxed review system.
+
+RULES:
+- Use the guanine MCP tools for ALL file modifications
+- NEVER use native write or edit tools to modify project files
+- Use mcp_guanine_checkout_file to get files into your workspace before editing
+- Use mcp_guanine_write_file to write changes (these go to an isolated workspace)
+- Use mcp_guanine_read_file or native read to view files (reading is unrestricted)
+- Call mcp_guanine_signal_done when your task is complete
+- Read CLAUDE.md and AGENTS.md from the repo root for project context and conventions
+
+Your edits will be reviewed by a human before being merged into the actual codebase.
+"""
+
 
 # ---------------------------------------------------------------------------
 # Lazy import helper (avoids circular import with file_merger.py)
@@ -1270,7 +1284,13 @@ def api_chat_events(session_id):
 
 @agent_bp.route('/api/chat-send/<session_id>', methods=['POST'])
 def api_chat_send(session_id):
-    """Send a user message to the agent session via its backend."""
+    """Send a user message to the agent session via its backend.
+
+    On the first message (no external_context set):
+    - Prepends sandbox system prefix
+    - Updates task_description to first 40 chars
+    - Stores prefix in external_context to mark it as sent
+    """
     session = agent_schema.get_session(session_id)
     if session is None:
         return jsonify({'error': 'Session not found'}), 404
@@ -1285,13 +1305,30 @@ def api_chat_send(session_id):
     # Record the user message in conversation history
     agent_schema.save_conversation_message(session_id, 'user', message)
 
+    # First message handling: sandbox prefix + session naming
+    actual_message = message
+    if not session.get('external_context'):
+        # Prepend sandbox instructions
+        actual_message = _SANDBOX_PREFIX + '\n\n' + message
+
+        # Update task description to first 40 chars of user message
+        task_label = message[:40]
+        db = agent_schema.get_agent_db()
+        db.execute(
+            'UPDATE agent_sessions SET task_description = ?, external_context = ? WHERE session_id = ?',
+            (task_label, 'sandbox_prefix_sent', session_id)
+        )
+        db.commit()
+        logger.info("First message for session %s: prefix injected, label='%s'", session_id, task_label)
+
     try:
         from agent_backends import get_backend_for_repo
         backend = get_backend_for_repo(session['repo_id'], backend_name)
         ref = session.get('backend_session_id') or session_id
-        result = backend.send_message(ref, message)
+        result = backend.send_message(ref, actual_message)
         return jsonify(result)
     except Exception as e:
+        logger.exception('Chat send failed for session %s', session_id)
         return jsonify({'status': 'error', 'error': str(e)}), 500
 
 
