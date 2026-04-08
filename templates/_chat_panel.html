@@ -1,0 +1,43 @@
+{# Chat Panel — Cascade-style with session tabs #}
+<div id="chatPanel" class="chat-panel collapsed" style="width:360px;">
+  {# Tab bar #}
+  <div class="chat-tab-bar" id="chatTabBar">
+    <div class="chat-tabs-scroll" id="chatTabsScroll">
+      {# Tabs injected dynamically by JS #}
+    </div>
+    <button class="chat-tab-plus" id="chatNewSessionBtn" onclick="chatCreateSession()" title="New OpenCode session">
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 1v12M1 7h12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+    </button>
+  </div>
+
+  {# Status bar — shown when a session is active #}
+  <div class="chat-status-bar" id="chatStatusBar" style="display:none;">
+    <span class="chat-status-dot" id="chatStatusDot"></span>
+    <span class="chat-status-text" id="chatStatusText">Ready</span>
+    <div class="chat-status-actions">
+      <button class="chat-status-btn" id="chatAbortBtn" onclick="chatAbort()" title="Abort" style="display:none;">
+        <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M3 3l6 6M9 3l-6 6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+      </button>
+      <button class="chat-status-btn" id="chatReviewBtn" onclick="chatReviewChanges()" title="Review changes" style="display:none;">Review</button>
+    </div>
+  </div>
+
+  {# Message area #}
+  <div class="chat-messages" id="chatMessages">
+    <div class="chat-empty-state" id="chatEmptyState">
+      <p style="color:#666; font-size:0.8rem; text-align:center; margin-top:40%;">
+        Click <strong>+</strong> to start a new agent session.<br>
+        <span style="font-size:0.7rem; color:#555;">OpenCode with GLM 5.1</span>
+      </p>
+    </div>
+  </div>
+
+  {# Input area #}
+  <div class="chat-input-area">
+    <textarea id="chatInput" class="chat-input" placeholder="Type a message..." rows="1"
+              onkeydown="chatInputKeydown(event)" oninput="chatAutoResize(this)"></textarea>
+    <button class="chat-send-btn" onclick="chatSend()" title="Send (Enter)">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2 8l10-5-3 5 3 5z" fill="currentColor"/></svg>
+    </button>
+  </div>
+</div>
