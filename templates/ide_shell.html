@@ -375,18 +375,23 @@ html, body { margin: 0; padding: 0; height: 100%; overflow: hidden;
 .chat-msg {
     display: flex; flex-direction: column; gap: 4px;
     max-width: 95%; font-size: 0.76rem; line-height: 1.5;
+    position: relative;
 }
 .chat-msg.user { align-self: flex-end; }
 .chat-msg.assistant { align-self: flex-start; }
+.chat-msg.system { align-self: center; max-width: 100%; }
 .chat-msg-role {
     font-size: 0.62rem; font-weight: 600; text-transform: uppercase;
     letter-spacing: 0.5px; color: #666;
 }
 .chat-msg.user .chat-msg-role { color: #0d6efd; text-align: right; }
 .chat-msg.assistant .chat-msg-role { color: #22c55e; }
+.chat-msg.system .chat-msg-role { color: #f04747; }
 .chat-msg-body {
     padding: 8px 12px; border-radius: 8px; color: #ddd;
     word-wrap: break-word; white-space: pre-wrap;
+    user-select: text; -webkit-user-select: text; cursor: text;
+    position: relative;
 }
 .chat-msg.user .chat-msg-body {
     background: #1a3a5c; border: 1px solid #1e4a7a; border-radius: 8px 8px 2px 8px;
@@ -394,6 +399,21 @@ html, body { margin: 0; padding: 0; height: 100%; overflow: hidden;
 .chat-msg.assistant .chat-msg-body {
     background: #1e2a1e; border: 1px solid #2d4a2d; border-radius: 8px 8px 8px 2px;
 }
+.chat-msg.system .chat-msg-body {
+    background: #2a1a1a; border: 1px solid #4a2d2d; color: #f08080;
+    font-size: 0.72rem;
+}
+/* Copy button on messages */
+.chat-msg-copy {
+    position: absolute; top: 4px; right: 4px;
+    background: #252a32; border: 1px solid #444; color: #888;
+    border-radius: 3px; padding: 2px 5px; font-size: 0.58rem;
+    cursor: pointer; opacity: 0; transition: opacity 0.15s;
+    z-index: 2;
+}
+.chat-msg:hover .chat-msg-copy { opacity: 0.8; }
+.chat-msg-copy:hover { background: #333; color: #ddd; opacity: 1 !important; }
+.chat-msg-copy.copied { color: #43b581; border-color: #43b581; }
 
 /* Tool call blocks */
 .chat-tool-block {
@@ -4439,7 +4459,7 @@ async function chatCreateSession() {
         document.getElementById('chatInput').focus();
 
     } catch (err) {
-        showToast('Failed to create session: ' + err, 'danger');
+        chatAppendMessage({ role: 'system', content: 'Failed to create session: ' + err });
     } finally {
         btn.disabled = false;
     }
@@ -4626,14 +4646,14 @@ function chatLoadMessages(sessionId) {
 function chatAppendMessage(msg) {
     const msgArea = document.getElementById('chatMessages');
     const role = msg.role || 'assistant';
-    if (role === 'system') return; // Skip system messages
 
     const div = document.createElement('div');
     div.className = 'chat-msg ' + role;
 
     const roleLabel = document.createElement('div');
     roleLabel.className = 'chat-msg-role';
-    roleLabel.textContent = role === 'user' ? 'You' : role === 'tool' ? 'Tool' : 'Agent';
+    const roleNames = { user: 'You', tool: 'Tool', assistant: 'Agent', system: 'System' };
+    roleLabel.textContent = roleNames[role] || role;
 
     const body = document.createElement('div');
     body.className = 'chat-msg-body';
@@ -4664,7 +4684,35 @@ function chatAppendMessage(msg) {
         body.textContent = msg.content || '';
     }
 
+    // Copy button — appears on hover
+    const copyBtn = document.createElement('button');
+    copyBtn.className = 'chat-msg-copy';
+    copyBtn.textContent = 'Copy';
+    copyBtn.onclick = function(e) {
+        e.stopPropagation();
+        const text = body.innerText || body.textContent || '';
+        navigator.clipboard.writeText(text).then(() => {
+            copyBtn.textContent = 'Copied';
+            copyBtn.classList.add('copied');
+            setTimeout(() => { copyBtn.textContent = 'Copy'; copyBtn.classList.remove('copied'); }, 1500);
+        }).catch(() => {
+            // Fallback for older browsers / non-HTTPS
+            const ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.position = 'fixed';
+            ta.style.opacity = '0';
+            document.body.appendChild(ta);
+            ta.select();
+            document.execCommand('copy');
+            document.body.removeChild(ta);
+            copyBtn.textContent = 'Copied';
+            copyBtn.classList.add('copied');
+            setTimeout(() => { copyBtn.textContent = 'Copy'; copyBtn.classList.remove('copied'); }, 1500);
+        });
+    };
+
     div.appendChild(roleLabel);
+    body.appendChild(copyBtn);
     div.appendChild(body);
     msgArea.appendChild(div);
 }
@@ -4720,7 +4768,10 @@ function chatConnectSSE(sessionId) {
         try {
             const data = JSON.parse(e.data);
             if (sessionId === chatSessionId) {
-                showToast('Agent error: ' + (data.error || 'Unknown'), 'danger');
+                // Show error as a copyable system message in the chat area
+                chatAppendMessage({ role: 'system', content: data.error || 'Unknown error' });
+                const msgArea = document.getElementById('chatMessages');
+                msgArea.scrollTop = msgArea.scrollHeight;
             }
         } catch(ex) {}
     });
@@ -4731,11 +4782,7 @@ function chatConnectSSE(sessionId) {
             chatEventSource.close();
             chatEventSource = null;
             if (sessionId === chatSessionId) {
-                const msgArea = document.getElementById('chatMessages');
-                const sysMsg = document.createElement('div');
-                sysMsg.className = 'chat-msg system';
-                sysMsg.innerHTML = '<div class="chat-msg-body" style="color:#f04747; font-size:0.7rem;">Connection lost. Refresh or switch tabs to reconnect.</div>';
-                msgArea.appendChild(sysMsg);
+                chatAppendMessage({ role: 'system', content: 'Connection lost. Refresh or switch tabs to reconnect.' });
             }
         }
     };
@@ -4828,10 +4875,12 @@ function chatSend() {
     .then(r => r.json())
     .then(data => {
         if (data.error) {
-            showToast('Send error: ' + data.error, 'danger');
+            chatAppendMessage({ role: 'system', content: 'Send error: ' + data.error });
         }
     })
-    .catch(err => showToast('Send failed: ' + err, 'danger'));
+    .catch(err => {
+        chatAppendMessage({ role: 'system', content: 'Send failed: ' + err });
+    });
 }
 
 function chatInputKeydown(e) {
