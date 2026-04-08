@@ -5214,9 +5214,8 @@ function dashAbort(sessionId) {
 }
 
 function dashNewSession() {
-    // Open agent sessions sidebar to create a new session
-    switchSidebarView('agent');
-    showToast('Use the Agent Sessions panel to create a new session', 'info');
+    // Create a new OpenCode session via the chat panel tab system
+    chatCreateSession();
 }
 
 // Auto-load dashboard when view is switched
