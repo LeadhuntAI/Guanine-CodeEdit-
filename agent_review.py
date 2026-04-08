@@ -1255,9 +1255,11 @@ def api_conversation(session_id):
 def api_chat_events(session_id):
     """SSE endpoint for real-time chat events from an agent session.
 
-    Proxies events from the appropriate backend (builtin/opencode).
-    For OpenCode: streams from OpenCode's SSE API.
-    For builtin: yields events as the agentic loop runs (future).
+    For OpenCode sessions: connects to OpenCode's SSE, transforms events
+    into our normalized format:
+        message.updated  -> message.content (streaming text)
+        message.part.updated -> tool.start / tool.result (tool call progress)
+        session.updated  -> session.complete / session.error (status changes)
     """
     session = agent_schema.get_session(session_id)
     if session is None:
@@ -1272,10 +1274,61 @@ def api_chat_events(session_id):
             from agent_backends import get_backend_for_repo
             backend = get_backend_for_repo(session['repo_id'], backend_name)
             ref = session.get('backend_session_id') or session_id
+
             for event in backend.subscribe_events(ref):
-                event_type = event.pop('type', 'message')
-                yield f'event: {event_type}\ndata: {json.dumps(event)}\n\n'
+                raw_type = event.pop('type', 'message')
+
+                # Normalize OpenCode event types to our format
+                if raw_type == 'message.updated':
+                    # Streaming text content
+                    content = event.get('content', '')
+                    if not content:
+                        # Try nested structure
+                        parts = event.get('parts', [])
+                        for part in parts:
+                            if part.get('type') == 'text':
+                                content = part.get('content', '')
+                                break
+                    yield f'event: message.content\ndata: {json.dumps({"content": content})}\n\n'
+
+                elif raw_type == 'message.part.updated':
+                    part = event.get('part', event)
+                    part_type = part.get('type', '')
+                    if part_type == 'tool-invocation':
+                        state = part.get('toolInvocation', part).get('state', '')
+                        tool_name = part.get('toolInvocation', part).get('toolName', part.get('name', 'tool'))
+                        tool_id = part.get('id', str(id(part)))
+                        if state == 'call' or state == 'partial-call':
+                            args = part.get('toolInvocation', part).get('args', '')
+                            if isinstance(args, dict):
+                                args = json.dumps(args)
+                            yield f'event: tool.start\ndata: {json.dumps({"id": tool_id, "name": tool_name, "arguments": args})}\n\n'
+                        elif state == 'result':
+                            result_val = part.get('toolInvocation', part).get('result', '')
+                            yield f'event: tool.result\ndata: {json.dumps({"id": tool_id, "result": result_val})}\n\n'
+                    elif part_type == 'text':
+                        content = part.get('content', part.get('text', ''))
+                        yield f'event: message.content\ndata: {json.dumps({"content": content})}\n\n'
+
+                elif raw_type == 'session.updated':
+                    status = event.get('status', '')
+                    if status in ('completed', 'complete'):
+                        yield f'event: session.complete\ndata: {json.dumps(event)}\n\n'
+                        # Update Guanine session status
+                        agent_schema.update_session_status(session_id, 'completed')
+                    elif status == 'error':
+                        yield f'event: session.error\ndata: {json.dumps(event)}\n\n'
+                        agent_schema.update_session_status(session_id, 'rejected')
+
+                elif raw_type == 'message.complete':
+                    yield f'event: message.complete\ndata: {json.dumps(event)}\n\n'
+
+                else:
+                    # Pass through unrecognized events
+                    yield f'event: {raw_type}\ndata: {json.dumps(event)}\n\n'
+
         except Exception as e:
+            logger.exception('SSE stream error for session %s', session_id)
             yield f'event: session.error\ndata: {json.dumps({"error": str(e)})}\n\n'
 
     return Response(generate(), mimetype='text/event-stream',
