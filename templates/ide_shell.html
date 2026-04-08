@@ -4388,11 +4388,13 @@ restoreTabSession();  // Restore previously open tabs from localStorage
 })();
 
 /* ================================================================
-   CHAT PANEL — Cascade-style agent interaction
+   CHAT PANEL — Cascade-style agent interaction with session tabs
    ================================================================ */
-let chatSessionId = null;
-let chatEventSource = null;
-let chatStreamingMsgEl = null;
+// ----- Chat panel state -----
+let chatSessionId = null;      // Currently active session ID
+let chatEventSource = null;    // Active SSE connection
+let chatStreamingMsgEl = null; // Streaming message element being built
+const chatTabs = new Map();    // session_id -> {label, status, element, messages}
 
 function toggleChatPanel() {
     const panel = document.getElementById('chatPanel');
@@ -4405,60 +4407,203 @@ function toggleChatPanel() {
     }
 }
 
-function chatTogglePosition() {
-    // Future: toggle between right-side and bottom position
-    showToast('Position toggle coming soon', 'info');
-}
-
-function chatSwitchBackend() {
-    const select = document.getElementById('chatBackendSelect');
-    showToast('Backend: ' + select.value, 'info');
-}
-
-function chatBindSession(sessionId) {
-    chatSessionId = sessionId;
+async function chatCreateSession() {
+    // Ensure panel is open
     const panel = document.getElementById('chatPanel');
-    const sessionBar = document.getElementById('chatSessionBar');
-    const emptyState = document.getElementById('chatEmptyState');
-    const msgArea = document.getElementById('chatMessages');
-    const title = document.getElementById('chatTitle');
-
-    // Open panel if collapsed
     if (panel.classList.contains('collapsed')) toggleChatPanel();
 
-    // Show session bar
-    sessionBar.style.display = 'flex';
+    const btn = document.getElementById('chatNewSessionBtn');
+    btn.disabled = true;
+
+    try {
+        // Get repo_id from the project switcher if available
+        const repoId = (document.getElementById('repoSwitcher') || {}).value || '';
+
+        const resp = await fetch('/agent/api/quick-session', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ repo_id: repoId })
+        });
+        const data = await resp.json();
+
+        if (data.error) {
+            showToast(data.error, 'danger');
+            return;
+        }
+
+        // Add tab and switch to it
+        chatAddTab(data.session_id, 'New Session', 'running');
+        chatSwitchTab(data.session_id);
+
+        // Focus input
+        document.getElementById('chatInput').focus();
+
+    } catch (err) {
+        showToast('Failed to create session: ' + err, 'danger');
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+function chatAddTab(sessionId, label, status) {
+    const scroll = document.getElementById('chatTabsScroll');
+
+    const tab = document.createElement('div');
+    tab.className = 'chat-tab';
+    tab.dataset.sessionId = sessionId;
+    tab.onclick = function(e) {
+        if (e.target.classList.contains('chat-tab-close')) return;
+        chatSwitchTab(sessionId);
+    };
+
+    const dot = document.createElement('span');
+    dot.className = 'chat-tab-dot ' + (status || 'pending');
+
+    const labelEl = document.createElement('span');
+    labelEl.className = 'chat-tab-label';
+    labelEl.textContent = (label || 'New Session').substring(0, 40);
+
+    const close = document.createElement('span');
+    close.className = 'chat-tab-close';
+    close.textContent = '\u00d7';
+    close.onclick = function(e) {
+        e.stopPropagation();
+        chatRemoveTab(sessionId);
+    };
+
+    tab.appendChild(dot);
+    tab.appendChild(labelEl);
+    tab.appendChild(close);
+    scroll.appendChild(tab);
+
+    // Store in state
+    chatTabs.set(sessionId, {
+        label: label || 'New Session',
+        status: status || 'pending',
+        element: tab,
+        messages: ''  // cache conversation HTML for tab switching
+    });
+
+    // Scroll to the new tab
+    scroll.scrollLeft = scroll.scrollWidth;
+}
+
+function chatSwitchTab(sessionId) {
+    // Deactivate all tabs
+    document.querySelectorAll('.chat-tab').forEach(t => t.classList.remove('active'));
+
+    // Save current messages to cache before switching
+    if (chatSessionId && chatTabs.has(chatSessionId)) {
+        const msgArea = document.getElementById('chatMessages');
+        chatTabs.get(chatSessionId).messages = msgArea.innerHTML;
+    }
+
+    // Activate the target tab
+    const tabInfo = chatTabs.get(sessionId);
+    if (!tabInfo) return;
+    tabInfo.element.classList.add('active');
+
+    // Update active session
+    chatSessionId = sessionId;
+
+    // Show status bar
+    const statusBar = document.getElementById('chatStatusBar');
+    statusBar.style.display = 'flex';
+    chatUpdateStatusBar(tabInfo.status);
+
+    // Hide empty state
+    const emptyState = document.getElementById('chatEmptyState');
     if (emptyState) emptyState.style.display = 'none';
 
-    // Load session info
-    fetch('/agent/api/session-detail/' + sessionId)
-        .then(r => r.json())
-        .then(data => {
-            const s = data.session || data;
-            title.textContent = (s.task_description || 'Agent Chat').substring(0, 40);
-            document.getElementById('chatSessionTask').textContent = s.task_description || '';
-            const statusEl = document.getElementById('chatSessionStatus');
-            statusEl.className = 'chat-session-status ' + (s.status || '');
+    // Restore cached messages or load from server
+    const msgArea = document.getElementById('chatMessages');
+    if (tabInfo.messages && tabInfo.messages.length > 0) {
+        msgArea.innerHTML = tabInfo.messages;
+    } else {
+        msgArea.innerHTML = '';
+        chatLoadMessages(sessionId);
+    }
 
-            // Show review button if completed
-            const reviewBtn = document.getElementById('chatReviewBtn');
-            if (s.status === 'completed' || s.status === 'review') {
-                reviewBtn.style.display = '';
-            } else {
-                reviewBtn.style.display = 'none';
-            }
-
-            // Show backend in select
-            const sel = document.getElementById('chatBackendSelect');
-            if (s.backend) sel.value = s.backend;
-        })
-        .catch(() => {});
-
-    // Load conversation history
-    chatLoadMessages(sessionId);
-
-    // Connect SSE for live updates
+    // Reconnect SSE to this session
     chatConnectSSE(sessionId);
+
+    // Show abort button if running
+    document.getElementById('chatAbortBtn').style.display =
+        tabInfo.status === 'running' ? '' : 'none';
+    document.getElementById('chatReviewBtn').style.display =
+        (tabInfo.status === 'completed' || tabInfo.status === 'review') ? '' : 'none';
+}
+
+function chatRemoveTab(sessionId) {
+    const tabInfo = chatTabs.get(sessionId);
+    if (!tabInfo) return;
+
+    tabInfo.element.remove();
+    chatTabs.delete(sessionId);
+
+    // If we removed the active tab, switch to the last remaining tab
+    if (chatSessionId === sessionId) {
+        chatSessionId = null;
+        if (chatEventSource) { chatEventSource.close(); chatEventSource = null; }
+
+        const remaining = Array.from(chatTabs.keys());
+        if (remaining.length > 0) {
+            chatSwitchTab(remaining[remaining.length - 1]);
+        } else {
+            // No tabs left — show empty state
+            document.getElementById('chatStatusBar').style.display = 'none';
+            document.getElementById('chatMessages').innerHTML = '';
+            const emptyState = document.getElementById('chatEmptyState');
+            if (emptyState) emptyState.style.display = '';
+        }
+    }
+}
+
+function chatUpdateTabLabel(sessionId, label) {
+    const tabInfo = chatTabs.get(sessionId);
+    if (!tabInfo) return;
+    tabInfo.label = label;
+    const labelEl = tabInfo.element.querySelector('.chat-tab-label');
+    if (labelEl) labelEl.textContent = label.substring(0, 40);
+}
+
+function chatUpdateTabStatus(sessionId, status) {
+    const tabInfo = chatTabs.get(sessionId);
+    if (!tabInfo) return;
+    tabInfo.status = status;
+    const dot = tabInfo.element.querySelector('.chat-tab-dot');
+    if (dot) dot.className = 'chat-tab-dot ' + status;
+
+    // Update status bar if this is the active session
+    if (sessionId === chatSessionId) {
+        chatUpdateStatusBar(status);
+    }
+}
+
+function chatUpdateStatusBar(status) {
+    const dot = document.getElementById('chatStatusDot');
+    const text = document.getElementById('chatStatusText');
+    dot.className = 'chat-status-dot';
+
+    const labels = {
+        pending: 'Pending', running: 'Running', completed: 'Completed',
+        review: 'Review', merged: 'Merged', rejected: 'Rejected', error: 'Error'
+    };
+    text.textContent = labels[status] || status || 'Ready';
+
+    // Color the dot
+    if (status === 'running') { dot.style.background = '#5865f2'; }
+    else if (status === 'completed') { dot.style.background = '#43b581'; }
+    else if (status === 'review') { dot.style.background = '#faa61a'; }
+    else if (status === 'merged') { dot.style.background = '#9b59b6'; }
+    else if (status === 'error' || status === 'rejected') { dot.style.background = '#f04747'; }
+    else { dot.style.background = '#666'; }
+
+    // Toggle action buttons
+    document.getElementById('chatAbortBtn').style.display =
+        status === 'running' ? '' : 'none';
+    document.getElementById('chatReviewBtn').style.display =
+        (status === 'completed' || status === 'review') ? '' : 'none';
 }
 
 function chatLoadMessages(sessionId) {
@@ -4467,7 +4612,6 @@ function chatLoadMessages(sessionId) {
         .then(r => r.json())
         .then(data => {
             const messages = data.messages || data;
-            // Clear existing messages (keep empty state hidden)
             msgArea.innerHTML = '';
             if (!messages || messages.length === 0) {
                 msgArea.innerHTML = '<div class="chat-empty-state"><p style="color:#555; font-size:0.75rem;">No messages yet. Send a message to start.</p></div>';
@@ -4530,62 +4674,80 @@ function chatConnectSSE(sessionId) {
         chatEventSource.close();
         chatEventSource = null;
     }
+    chatStreamingMsgEl = null;
 
     const url = '/agent/api/chat-events/' + sessionId;
     chatEventSource = new EventSource(url);
+    let reconnectAttempts = 0;
 
     chatEventSource.addEventListener('message.content', function(e) {
         try {
             const data = JSON.parse(e.data);
+            if (sessionId !== chatSessionId) return;
             chatHandleStreamChunk(data);
         } catch(ex) {}
     });
 
     chatEventSource.addEventListener('message.complete', function(e) {
-        chatFinishStreaming();
+        if (sessionId === chatSessionId) chatFinishStreaming();
     });
 
     chatEventSource.addEventListener('tool.start', function(e) {
         try {
             const data = JSON.parse(e.data);
-            chatAppendToolStart(data);
+            if (sessionId === chatSessionId) chatAppendToolStart(data);
         } catch(ex) {}
     });
 
     chatEventSource.addEventListener('tool.result', function(e) {
         try {
             const data = JSON.parse(e.data);
-            chatAppendToolResult(data);
+            if (sessionId === chatSessionId) chatAppendToolResult(data);
         } catch(ex) {}
     });
 
     chatEventSource.addEventListener('session.complete', function(e) {
-        chatFinishStreaming();
-        const statusEl = document.getElementById('chatSessionStatus');
-        statusEl.className = 'chat-session-status completed';
-        document.getElementById('chatReviewBtn').style.display = '';
-        showToast('Agent session completed', 'success');
+        if (sessionId === chatSessionId) chatFinishStreaming();
+        chatUpdateTabStatus(sessionId, 'completed');
+        if (sessionId === chatSessionId) {
+            showToast('Agent session completed', 'success');
+        }
     });
 
     chatEventSource.addEventListener('session.error', function(e) {
-        chatFinishStreaming();
-        const statusEl = document.getElementById('chatSessionStatus');
-        statusEl.className = 'chat-session-status error';
+        if (sessionId === chatSessionId) chatFinishStreaming();
+        chatUpdateTabStatus(sessionId, 'error');
         try {
             const data = JSON.parse(e.data);
-            showToast('Agent error: ' + (data.error || 'Unknown'), 'danger');
+            if (sessionId === chatSessionId) {
+                showToast('Agent error: ' + (data.error || 'Unknown'), 'danger');
+            }
         } catch(ex) {}
     });
 
     chatEventSource.onerror = function() {
-        // Auto-reconnect is built into EventSource
+        reconnectAttempts++;
+        if (reconnectAttempts > 30) {
+            chatEventSource.close();
+            chatEventSource = null;
+            if (sessionId === chatSessionId) {
+                const msgArea = document.getElementById('chatMessages');
+                const sysMsg = document.createElement('div');
+                sysMsg.className = 'chat-msg system';
+                sysMsg.innerHTML = '<div class="chat-msg-body" style="color:#f04747; font-size:0.7rem;">Connection lost. Refresh or switch tabs to reconnect.</div>';
+                msgArea.appendChild(sysMsg);
+            }
+        }
+    };
+
+    chatEventSource.onopen = function() {
+        reconnectAttempts = 0;
     };
 }
 
 function chatHandleStreamChunk(data) {
     const msgArea = document.getElementById('chatMessages');
     if (!chatStreamingMsgEl) {
-        // Start a new streaming message
         chatStreamingMsgEl = document.createElement('div');
         chatStreamingMsgEl.className = 'chat-msg assistant';
         chatStreamingMsgEl.innerHTML = '<div class="chat-msg-role">Agent</div>' +
@@ -4636,8 +4798,9 @@ function chatSend() {
     const input = document.getElementById('chatInput');
     const text = input.value.trim();
     if (!text) return;
+
     if (!chatSessionId) {
-        showToast('No active chat session. Select a session first.', 'warning');
+        showToast('Click + to start a session first.', 'warning');
         return;
     }
 
@@ -4650,11 +4813,17 @@ function chatSend() {
     const msgArea = document.getElementById('chatMessages');
     msgArea.scrollTop = msgArea.scrollHeight;
 
+    // If this is the first message, update the tab label
+    const tabInfo = chatTabs.get(chatSessionId);
+    if (tabInfo && tabInfo.label === 'New Session') {
+        chatUpdateTabLabel(chatSessionId, text.substring(0, 40));
+    }
+
     // Send to backend
     fetch('/agent/api/chat-send/' + chatSessionId, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: text, backend: document.getElementById('chatBackendSelect').value })
+        body: JSON.stringify({ message: text })
     })
     .then(r => r.json())
     .then(data => {
@@ -4684,8 +4853,7 @@ function chatAbort() {
         .then(data => {
             if (data.status === 'aborted') {
                 showToast('Session aborted', 'warning');
-                const statusEl = document.getElementById('chatSessionStatus');
-                statusEl.className = 'chat-session-status error';
+                chatUpdateTabStatus(chatSessionId, 'error');
             }
         })
         .catch(err => showToast('Abort failed: ' + err, 'danger'));
@@ -4693,9 +4861,51 @@ function chatAbort() {
 
 function chatReviewChanges() {
     if (!chatSessionId) return;
-    // Navigate to review in current IDE — open session tab
     openSessionTab(chatSessionId);
 }
+
+function chatBindSession(sessionId) {
+    // Open an existing session in a new tab (called from dashboard/sidebar)
+    if (chatTabs.has(sessionId)) {
+        chatSwitchTab(sessionId);
+        return;
+    }
+
+    fetch('/agent/api/session-detail/' + sessionId)
+        .then(r => r.json())
+        .then(data => {
+            const s = data.session || data;
+            const label = (s.task_description || 'Session').substring(0, 40);
+            const status = s.status || 'pending';
+            chatAddTab(sessionId, label, status);
+            chatSwitchTab(sessionId);
+
+            const panel = document.getElementById('chatPanel');
+            if (panel.classList.contains('collapsed')) toggleChatPanel();
+        })
+        .catch(err => showToast('Failed to load session: ' + err, 'danger'));
+}
+
+function chatLoadExistingTabs() {
+    fetch('/agent/api/sessions-browse')
+        .then(r => r.json())
+        .then(data => {
+            const sessions = data.sessions || [];
+            sessions.forEach(s => {
+                if (s.status === 'running' && s.backend === 'opencode') {
+                    chatAddTab(s.session_id, (s.task_description || 'Session').substring(0, 40), s.status);
+                }
+            });
+            const running = sessions.filter(s => s.status === 'running' && s.backend === 'opencode');
+            if (running.length > 0) {
+                chatSwitchTab(running[0].session_id);
+            }
+        })
+        .catch(() => {});
+}
+
+// Load existing running sessions as tabs on page load
+chatLoadExistingTabs();
 
 // Chat resize handle
 (function() {
