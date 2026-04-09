@@ -1,0 +1,130 @@
+{% extends "base.html" %}
+{% block title_suffix %} - Activity{% endblock %}
+
+{% block content %}
+<h1>Activity Feed</h1>
+
+<div class="filters" id="type-filters">
+  <a href="#" class="active" data-type="all">All</a>
+  <a href="#" data-type="tool">&#128295; jCodeMunch Tools</a>
+  <a href="#" data-type="doc_gen">&#128196; Doc Generated</a>
+  <a href="#" data-type="doc_file">&#128214; Doc Rules on Disk</a>
+  <a href="#" data-type="scan">&#128269; Spark File Scan</a>
+</div>
+
+<div style="font-size: 11px; color: var(--text-dim); margin-bottom: 16px;">
+  Auto-refreshes every 5 seconds. Showing <span id="visible-count">{{ events|length }}</span> of <span id="total-count">{{ events|length }}</span> events.
+</div>
+
+<ul class="feed" id="feed">
+{% for e in events %}
+  <li data-type="{{ e.type }}">
+    <span class="time">{{ e.time }}</span>
+    <span class="icon">
+      {% if e.type == 'tool' %}&#128295;{% elif e.type == 'doc_gen' %}&#128196;{% elif e.type == 'doc_file' %}&#128214;{% elif e.type == 'scan' %}&#128269;{% else %}&#9679;{% endif %}
+    </span>
+    <span class="type-label">
+      {% if e.type == 'tool' %}jCodeMunch{% elif e.type == 'doc_gen' %}Doc Gen{% elif e.type == 'doc_file' %}Doc Rule{% elif e.type == 'scan' %}File Scan{% else %}Event{% endif %}
+    </span>
+    <span class="desc {% if e.level == 'ERROR' %}error-text{% endif %}">{{ e.desc }}</span>
+  </li>
+{% endfor %}
+</ul>
+
+{% if not events %}
+<div class="empty" id="empty-state">No activity recorded yet.</div>
+{% endif %}
+
+<style>
+.type-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  padding: 2px 6px;
+  border-radius: 8px;
+  white-space: nowrap;
+  min-width: 80px;
+  text-align: center;
+}
+li[data-type="tool"] .type-label { background: rgba(88, 166, 255, 0.15); color: var(--accent); }
+li[data-type="doc_gen"] .type-label { background: rgba(63, 185, 80, 0.15); color: var(--green); }
+li[data-type="doc_file"] .type-label { background: rgba(188, 140, 255, 0.15); color: var(--purple); }
+li[data-type="scan"] .type-label { background: rgba(210, 153, 34, 0.15); color: var(--yellow); }
+.error-text { color: var(--red); }
+li.hidden-by-filter { display: none !important; }
+</style>
+
+<script>
+(function() {
+  // --- Filter logic ---
+  let activeFilter = 'all';
+  const filterLinks = document.querySelectorAll('#type-filters a');
+
+  function applyFilter() {
+    const items = document.querySelectorAll('#feed li');
+    let visible = 0;
+    items.forEach(li => {
+      const type = li.getAttribute('data-type');
+      if (activeFilter === 'all' || type === activeFilter) {
+        li.classList.remove('hidden-by-filter');
+        visible++;
+      } else {
+        li.classList.add('hidden-by-filter');
+      }
+    });
+    document.getElementById('visible-count').textContent = visible;
+    document.getElementById('total-count').textContent = items.length;
+  }
+
+  filterLinks.forEach(link => {
+    link.addEventListener('click', e => {
+      e.preventDefault();
+      filterLinks.forEach(l => l.classList.remove('active'));
+      link.classList.add('active');
+      activeFilter = link.getAttribute('data-type');
+      applyFilter();
+    });
+  });
+
+  // --- Polling logic ---
+  let lastTime = '{{ events[0].time if events else "" }}';
+  const icons = {
+    tool: '\u{1F527}',
+    doc_gen: '\u{1F4C4}',
+    doc_file: '\u{1F4D6}',
+    scan: '\u{1F50D}'
+  };
+  const labels = {
+    tool: 'jCodeMunch',
+    doc_gen: 'Doc Gen',
+    doc_file: 'Doc Rule',
+    scan: 'File Scan'
+  };
+
+  setInterval(async () => {
+    try {
+      const url = '/api/activity' + (lastTime ? '?since=' + encodeURIComponent(lastTime) : '');
+      const resp = await fetch(url);
+      const items = await resp.json();
+      if (items.length === 0) return;
+      const feed = document.getElementById('feed');
+      for (let i = items.length - 1; i >= 0; i--) {
+        const e = items[i];
+        const li = document.createElement('li');
+        li.setAttribute('data-type', e.type);
+        const icon = icons[e.type] || '\u25CF';
+        const label = labels[e.type] || 'Event';
+        li.innerHTML = `<span class="time">${e.time}</span>`
+          + `<span class="icon">${icon}</span>`
+          + `<span class="type-label">${label}</span>`
+          + `<span class="desc">${e.desc}</span>`;
+        feed.prepend(li);
+      }
+      lastTime = items[0].time;
+      applyFilter();
+    } catch(e) {}
+  }, 5000);
+})();
+</script>
+{% endblock %}

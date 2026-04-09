@@ -1,7 +1,13 @@
 """One-time setup: register this repo for sandboxed agent sessions
 and enable the sandbox by creating the flag file."""
+
+__version__ = "1.2.0"
+
 import os
 import sys
+import logging
+
+log = logging.getLogger(__name__)
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -14,7 +20,7 @@ REPO_NAME = "Guanine(CodeEdit)"
 repo = agent_schema.register_repo(
     repo_path=REPO_PATH,
     repo_name=REPO_NAME,
-    allowed_commands=["python", "pytest", "pip", "git"],
+    allowed_commands=["python", "pytest", "pip", "git", "npm"],
     allow_free_commands=True,
 )
 
@@ -30,4 +36,8 @@ with open(flag_path, 'w') as f:
     f.write('Sandbox is active. Remove this file to disable.\n')
 
 print(f"\nSandbox enabled: {flag_path}")
-print(f"\nSetup complete. Restart Claude Code to pick up the new configuration.")
+print(f"\nSetup complete (v{__version__}). Restart Claude Code to pick up the new configuration.")
+
+# Post-setup verification
+print("
+Run: python -c "import agent_schema; print(agent_schema.list_repos())"")

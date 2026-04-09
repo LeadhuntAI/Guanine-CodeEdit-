@@ -53,6 +53,7 @@ def execute(
 ) -> str:
     """Get the file tree of the repository. Returns JSON string."""
     try:
+        max_depth = int(max_depth)
         base = os.path.realpath(_base_dir)
         if not os.path.isdir(base):
             return json.dumps({"error": f"Not a directory: {_base_dir}"})

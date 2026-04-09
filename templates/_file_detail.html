@@ -1,62 +1,77 @@
-<!-- File Detail Panel (AJAX loaded) -->
+<!-- File Detail Panel (AJAX loaded into browse right pane) -->
+<style>
+    /* Inline merge table (scoped to detail panel) */
+    .det-merge { width:100%; border-collapse:collapse; font-family:'Cascadia Code','Consolas',monospace; font-size:0.76rem; table-layout:fixed; }
+    .det-merge td { padding:0 6px; white-space:pre-wrap; word-break:break-all; vertical-align:top; line-height:1.4; }
+    .det-merge .ln { width:38px; min-width:38px; text-align:right; color:#4a4e54; user-select:none; padding-right:6px; border-right:1px solid #2a2d31; font-size:0.68rem; }
+    .det-merge .mc { width:calc(50% - 39px); }
+    .det-merge .mg { width:1px; min-width:1px; max-width:1px; padding:0; background:#333; }
+    .det-merge .r-eq .mc { color:#707580; }
+    .det-merge .r-eq:hover .mc { color:#999; }
+    .det-merge .r-del .mc.l { background:rgba(248,81,73,0.10); color:#f0a8a4; }
+    .det-merge .r-ins .mc.r { background:rgba(63,185,80,0.10); color:#a8dfab; }
+    .det-merge .r-rep .mc.l { background:rgba(248,81,73,0.08); color:#f0a8a4; }
+    .det-merge .r-rep .mc.r { background:rgba(63,185,80,0.08); color:#a8dfab; }
+    /* Action strip */
+    .det-merge .abar td { background:#22262c; padding:0!important; border-top:1px solid #3a3f47; border-bottom:1px solid #3a3f47; }
+    .det-astrip { display:flex; align-items:center; gap:4px; padding:1px 8px; }
+    .det-astrip .pb { font-size:0.65rem; font-weight:500; padding:0 8px; line-height:18px; border-radius:3px; border:1px solid transparent; cursor:pointer; background:transparent; color:#8b9098; transition:all 0.15s; }
+    .det-astrip .pb:hover { background:#2d333b; color:#cdd3da; }
+    .det-astrip .pb.pl { color:#f0a8a4; }
+    .det-astrip .pb.pl:hover { background:rgba(248,81,73,0.15); border-color:rgba(248,81,73,0.3); }
+    .det-astrip .pb.pr { color:#a8dfab; }
+    .det-astrip .pb.pr:hover { background:rgba(63,185,80,0.15); border-color:rgba(63,185,80,0.3); }
+    .det-astrip .pb.active { background:#0d6efd!important; border-color:#0d6efd!important; color:#fff!important; }
+    .det-astrip .asep { width:1px; height:14px; background:#3a3f47; margin:0 3px; }
+    .det-astrip .ainf { font-size:0.6rem; color:#5a5f66; margin-left:auto; white-space:nowrap; }
+    /* Pick feedback */
+    .det-merge .pk-l .mc.r, .det-merge .pk-n .mc.l, .det-merge .pk-n .mc.r { opacity:0.2; }
+    .det-merge .pk-r .mc.l { opacity:0.2; }
+    .det-merge .pk-l .mc.l, .det-merge .pk-r .mc.r { box-shadow:inset 3px 0 0 rgba(13,110,253,0.6); }
+    .det-merge .pk-b .mc.l, .det-merge .pk-b .mc.r { box-shadow:inset 3px 0 0 rgba(13,110,253,0.3); }
+    .det-merge .crow .mc { cursor:pointer; transition:opacity 0.15s, filter 0.15s; }
+    .det-merge .crow .mc:hover { filter:brightness(1.15); }
+    /* Fold */
+    .det-merge .frow td { text-align:center; color:#58a6ff; font-size:0.68rem; padding:2px 0!important; background:#161b22; cursor:pointer; border-top:1px solid #21262d; border-bottom:1px solid #21262d; }
+    .det-merge .frow:hover td { background:#1c2333; }
+    .det-merge .fhide { display:none; }
+</style>
+
 <div class="p-3">
     <!-- Header -->
-    <div class="d-flex justify-content-between align-items-start mb-3">
+    <div class="d-flex justify-content-between align-items-start mb-2">
         <div>
-            <h6 class="file-path mb-1" style="word-break:break-all;">{{ filepath }}</h6>
-            <span class="badge bg-{{ 'warning text-dark' if item.category == 'conflict' and not item.resolved else 'primary' if item.category == 'conflict' else 'success' if item.category == 'auto_unique' else 'info' }}">
+            <h6 class="file-path mb-1" style="word-break:break-all; font-size:0.85rem;">{{ filepath }}</h6>
+            <span class="badge bg-{{ 'warning text-dark' if item.category == 'conflict' and not item.resolved else 'primary' if item.category == 'conflict' else 'success' if item.category == 'auto_unique' else 'info' }}" style="font-size:0.65rem;">
                 {{ item.category.replace('auto_', '').replace('_', ' ').title() }}{% if item.category == 'conflict' and item.resolved %} (Resolved){% endif %}
             </span>
-            <span class="text-muted ms-2" style="font-size:0.8rem;">{{ versions|length }} version{{ 's' if versions|length != 1 }}</span>
+            <span class="text-muted ms-2" style="font-size:0.75rem;">{{ versions|length }} version{{ 's' if versions|length != 1 }}</span>
         </div>
         <div class="d-flex gap-1">
-            {% if item.category == 'conflict' %}
-            <a href="/conflict/{{ filepath }}" class="btn btn-sm btn-outline-secondary" target="_blank">Full View</a>
-            {% else %}
-            <a href="/api/file-content/{{ filepath }}?version=0" class="btn btn-sm btn-outline-secondary" target="_blank">View Raw</a>
-            {% endif %}
             {% if versions|length >= 2 %}
-            <a href="/merge/{{ filepath }}" class="btn btn-sm btn-outline-warning" target="_blank">Merge</a>
+            <a href="/merge/{{ filepath }}" class="btn btn-sm btn-outline-secondary" style="font-size:0.7rem; padding:1px 8px;" target="_blank" title="Open full-page merge editor">Expand</a>
             {% endif %}
         </div>
     </div>
 
-    <!-- All versions side by side as columns -->
-    <div class="d-flex gap-2 mb-3" style="overflow-x:auto;">
+    <!-- Compact version cards -->
+    <div class="d-flex gap-2 mb-2" style="overflow-x:auto;">
         {% for v in versions %}
-        <div class="flex-shrink-0" style="min-width:180px; max-width:240px; flex:1;">
-            <div class="card bg-dark border{{ '-primary' if v.selected else '' }} h-100" style="font-size:0.76rem;"
+        <div class="flex-shrink-0" style="min-width:160px; max-width:220px; flex:1;">
+            <div class="card bg-dark border{{ '-primary' if v.selected else '' }} h-100" style="font-size:0.72rem;"
                  onclick="resolveVersion('{{ filepath }}', {{ v.index }})" role="button">
-                <div class="card-body py-2 px-2">
-                    <!-- Source name + select radio -->
+                <div class="card-body py-1 px-2">
                     <div class="d-flex align-items-center gap-1 mb-1">
                         <input type="radio" name="detsel" {{ 'checked' if v.selected }}
-                               onclick="event.stopPropagation(); resolveVersion('{{ filepath }}', {{ v.index }})">
-                        <strong style="font-size:0.8rem;">{{ v.source_name }}</strong>
-                        {% if v.selected %}<span class="badge bg-primary ms-auto" style="font-size:0.55rem;">Selected</span>{% endif %}
+                               onclick="event.stopPropagation(); resolveVersion('{{ filepath }}', {{ v.index }})" style="margin:0;">
+                        <strong style="font-size:0.73rem;">{{ v.source_name }}</strong>
+                        {% if v.selected %}<span class="badge bg-primary ms-auto" style="font-size:0.5rem;">Selected</span>{% endif %}
                     </div>
-                    <!-- Metadata rows with highlights -->
-                    <table style="width:100%;font-size:0.73rem;">
-                        <tr>
-                            <td class="text-muted" style="width:55px;">Size</td>
-                            <td class="{{ 'hl-largest' if v.is_largest else '' }}">{{ v.size_human }}</td>
-                        </tr>
-                        <tr>
-                            <td class="text-muted">Lines</td>
-                            <td class="{{ 'hl-most-lines' if v.is_most_lines else '' }}">{{ v.line_count if v.line_count is not none else 'Binary' }}</td>
-                        </tr>
-                        <tr>
-                            <td class="text-muted">Modified</td>
-                            <td class="{{ 'hl-latest' if v.is_latest else '' }}">{{ v.modified_str }}</td>
-                        </tr>
-                        <tr>
-                            <td class="text-muted">Created</td>
-                            <td>{{ v.created_str }}</td>
-                        </tr>
-                        <tr>
-                            <td class="text-muted">SHA</td>
-                            <td class="file-path" style="font-size:0.68rem;">{{ v.sha256_short }}</td>
-                        </tr>
+                    <table style="width:100%; font-size:0.68rem;">
+                        <tr><td class="text-muted" style="width:48px;">Size</td><td class="{{ 'hl-largest' if v.is_largest }}">{{ v.size_human }}</td></tr>
+                        <tr><td class="text-muted">Lines</td><td class="{{ 'hl-most-lines' if v.is_most_lines }}">{{ v.line_count if v.line_count is not none else 'Binary' }}</td></tr>
+                        <tr><td class="text-muted">Modified</td><td class="{{ 'hl-latest' if v.is_latest }}">{{ v.modified_str }}</td></tr>
+                        <tr><td class="text-muted">SHA</td><td class="file-path" style="font-size:0.62rem;">{{ v.sha256_short }}</td></tr>
                     </table>
                 </div>
             </div>
@@ -64,99 +79,233 @@
         {% endfor %}
     </div>
 
-    <!-- Legend -->
-    {% if versions|length > 1 %}
-    <div class="mb-3" style="font-size:0.7rem;">
-        <span class="hl-largest me-2">Largest</span>
-        <span class="hl-latest me-2">Latest</span>
-        <span class="hl-most-lines">Most lines</span>
+    {% if versions|length >= 2 and hunks %}
+    <!-- ── Inline merge diff ── -->
+    <div class="d-flex justify-content-between align-items-center mb-1" style="font-size:0.72rem;">
+        <div class="d-flex gap-2 align-items-center">
+            <span style="color:#f0a8a4;">{{ source_a }}</span>
+            <span class="text-muted">vs</span>
+            <span style="color:#a8dfab;">{{ source_b }}</span>
+            <span class="text-muted ms-2">Changes: <strong class="text-light" id="detCC">0</strong></span>
+            <span class="text-muted">Picked: <strong class="text-light" id="detPC">0</strong></span>
+            <span id="detRM" class="text-warning"></span>
+        </div>
+        <div class="d-flex gap-1">
+            <button class="btn btn-sm btn-outline-secondary" style="font-size:0.65rem; padding:0 7px;" onclick="detPickAll('left')">All Left</button>
+            <button class="btn btn-sm btn-outline-success" style="font-size:0.65rem; padding:0 7px;" onclick="detPickAll('right')">All Right</button>
+            <button class="btn btn-sm btn-primary" style="font-size:0.65rem; padding:0 7px;" onclick="detSave()" id="detSaveBtn">Save</button>
+        </div>
     </div>
-    {% endif %}
 
-    <!-- Diff section -->
-    {% if versions|length >= 2 %}
-    <div class="card bg-dark border mb-3">
-        <div class="card-header py-1 d-flex justify-content-between align-items-center flex-wrap gap-1" style="font-size:0.78rem;">
-            <div class="d-flex align-items-center gap-2">
-                <button class="btn btn-sm btn-outline-secondary py-0" style="font-size:0.7rem;" onclick="navHunk('prev')" title="Ctrl+Up">&#9650;</button>
-                <span class="diff-counter" style="color:#888;">Diff -/-</span>
-                <button class="btn btn-sm btn-outline-secondary py-0" style="font-size:0.7rem;" onclick="navHunk('next')" title="Ctrl+Down">&#9660;</button>
-            </div>
-            <div class="d-flex align-items-center gap-1 flex-wrap">
-                <span class="text-muted">Compare:</span>
-                <!-- Quick pair buttons for all combinations -->
-                {% for v in versions %}
-                {% for v2 in versions %}
-                {% if v.index < v2.index %}
-                <button class="btn btn-sm py-0 {{ 'btn-primary' if v.index == diff_a_idx and v2.index == diff_b_idx else 'btn-outline-secondary' }}"
-                        style="font-size:0.65rem;"
-                        onclick="loadDetailDiff('{{ filepath }}', {{ v.index }}, {{ v2.index }})">
-                    {{ v.source_name[:8] }} vs {{ v2.source_name[:8] }}
-                </button>
-                {% endif %}
-                {% endfor %}
-                {% endfor %}
-            </div>
-        </div>
-        <!-- Side-by-side diff headers -->
-        <div class="d-flex border-bottom" style="font-size:0.75rem;background:#1e2225;">
-            <div class="px-2 py-1 text-warning" style="width:50%;">{{ versions[diff_a_idx].source_name if diff_a_idx < versions|length else 'A' }}</div>
-            <div class="px-2 py-1 text-info border-start" style="width:50%;">{{ versions[diff_b_idx].source_name if diff_b_idx < versions|length else 'B' }}</div>
-        </div>
-        <div class="sbs-wrapper" style="max-height:550px;" id="diffScrollArea">
-            <table class="sbs-table">
-                <tbody>
-                    {% for row in side_by_side %}
-                    <tr class="sbs-row-{{ row.type }}">
-                        <td class="line-num">{{ row.left_num }}</td>
-                        <td class="line-content left">{{ row.left_line | e }}</td>
-                        <td class="sbs-gutter"></td>
-                        <td class="line-num">{{ row.right_num }}</td>
-                        <td class="line-content right">{{ row.right_line | e }}</td>
+    <div style="max-height:calc(100vh - 280px); overflow:auto; border:1px solid #2a2d31; border-radius:4px;">
+        <table class="det-merge">
+            <colgroup><col style="width:38px"><col><col style="width:1px"><col style="width:38px"><col></colgroup>
+            <tbody>
+            {% for hunk in hunks %}
+                {% if hunk.type == 'equal' %}
+                    {% if hunk.lines_a | length > 16 %}
+                        {% for i in range(3) %}
+                        <tr class="r-eq">
+                            <td class="ln">{{ hunk.start_a + i }}</td><td class="mc l">{{ hunk.lines_a[i] | e }}</td>
+                            <td class="mg"></td>
+                            <td class="ln">{{ hunk.start_b + i }}</td><td class="mc r">{{ hunk.lines_b[i] | e }}</td>
+                        </tr>
+                        {% endfor %}
+                        <tr class="frow" onclick="detFold(this,{{ hunk.id }})">
+                            <td colspan="5">{{ hunk.lines_a | length - 6 }} unchanged lines</td>
+                        </tr>
+                        {% for i in range(3, hunk.lines_a | length - 3) %}
+                        <tr class="r-eq fhide" data-fid="{{ hunk.id }}">
+                            <td class="ln">{{ hunk.start_a + i }}</td><td class="mc l">{{ hunk.lines_a[i] | e }}</td>
+                            <td class="mg"></td>
+                            <td class="ln">{{ hunk.start_b + i }}</td><td class="mc r">{{ hunk.lines_b[i] | e }}</td>
+                        </tr>
+                        {% endfor %}
+                        {% for i in range(hunk.lines_a | length - 3, hunk.lines_a | length) %}
+                        <tr class="r-eq">
+                            <td class="ln">{{ hunk.start_a + i }}</td><td class="mc l">{{ hunk.lines_a[i] | e }}</td>
+                            <td class="mg"></td>
+                            <td class="ln">{{ hunk.start_b + i }}</td><td class="mc r">{{ hunk.lines_b[i] | e }}</td>
+                        </tr>
+                        {% endfor %}
+                    {% else %}
+                        {% for i in range(hunk.lines_a | length) %}
+                        <tr class="r-eq">
+                            <td class="ln">{{ hunk.start_a + i }}</td><td class="mc l">{{ hunk.lines_a[i] | e }}</td>
+                            <td class="mg"></td>
+                            <td class="ln">{{ hunk.start_b + i }}</td><td class="mc r">{{ hunk.lines_b[i] | e }}</td>
+                        </tr>
+                        {% endfor %}
+                    {% endif %}
+                {% elif hunk.type == 'conflict' %}
+                    <tr class="abar" data-hid="{{ hunk.id }}">
+                        <td colspan="5">
+                            <div class="det-astrip">
+                                <button class="pb pl" data-side="left" onclick="detPick({{ hunk.id }},'left')">&#8592; Left</button>
+                                <button class="pb pr" data-side="right" onclick="detPick({{ hunk.id }},'right')">Right &#8594;</button>
+                                <span class="asep"></span>
+                                <button class="pb" data-side="both" onclick="detPick({{ hunk.id }},'both')">Both</button>
+                                <button class="pb" data-side="none" onclick="detPick({{ hunk.id }},'none')">Skip</button>
+                                <span class="ainf">
+                                    {% if hunk.tag == 'replace' %}{{ hunk.lines_a | length }} &#8594; {{ hunk.lines_b | length }}
+                                    {% elif hunk.tag == 'delete' %}-{{ hunk.lines_a | length }}
+                                    {% elif hunk.tag == 'insert' %}+{{ hunk.lines_b | length }}
+                                    {% endif %}
+                                </span>
+                            </div>
+                        </td>
+                    </tr>
+                    {% set ns = namespace(mx=hunk.lines_a | length) %}
+                    {% if hunk.lines_b | length > ns.mx %}{% set ns.mx = hunk.lines_b | length %}{% endif %}
+                    {% for i in range(ns.mx) %}
+                    <tr class="{% if hunk.tag == 'delete' %}r-del{% elif hunk.tag == 'insert' %}r-ins{% else %}r-rep{% endif %} crow" data-hid="{{ hunk.id }}">
+                        {% if i < hunk.lines_a | length %}
+                        <td class="ln">{{ hunk.start_a + i }}</td><td class="mc l" onclick="detPick({{ hunk.id }},'left')">{{ hunk.lines_a[i] | e }}</td>
+                        {% else %}
+                        <td class="ln"></td><td class="mc l" onclick="detPick({{ hunk.id }},'left')"></td>
+                        {% endif %}
+                        <td class="mg"></td>
+                        {% if i < hunk.lines_b | length %}
+                        <td class="ln">{{ hunk.start_b + i }}</td><td class="mc r" onclick="detPick({{ hunk.id }},'right')">{{ hunk.lines_b[i] | e }}</td>
+                        {% else %}
+                        <td class="ln"></td><td class="mc r" onclick="detPick({{ hunk.id }},'right')"></td>
+                        {% endif %}
                     </tr>
                     {% endfor %}
-                    {% if not side_by_side %}
-                    <tr><td colspan="5" class="text-center text-muted py-3">No differences.</td></tr>
-                    {% endif %}
-                </tbody>
-            </table>
-        </div>
+                {% endif %}
+            {% endfor %}
+            </tbody>
+        </table>
     </div>
 
     {% elif versions|length == 1 %}
     <!-- Single version preview -->
-    <div class="card bg-dark border">
-        <div class="card-header py-1" style="font-size:0.8rem;">
-            <strong>Preview</strong> <small class="text-muted">({{ versions[0].source_name }})</small>
-        </div>
-        <div style="max-height:500px;overflow:auto;">
-            <pre class="mb-0 p-2" style="font-size:0.76rem;background:transparent;color:#aaa;" id="previewContent">Loading...</pre>
-        </div>
+    <div style="max-height:400px; overflow:auto; border:1px solid #2a2d31; border-radius:4px;">
+        <pre class="mb-0 p-2" style="font-size:0.74rem; background:transparent; color:#aaa;" id="previewContent">Loading...</pre>
     </div>
     <script>
         fetch('/api/file-content/{{ filepath }}?version=0')
             .then(r=>r.json())
             .then(d=>{
-                const el=document.getElementById('previewContent');
-                el.textContent = d.is_binary ? '[Binary file]' : d.content.split('\n').slice(0,300).join('\n');
+                document.getElementById('previewContent').textContent = d.is_binary ? '[Binary file]' : d.content.split('\n').slice(0,300).join('\n');
             }).catch(e=>{document.getElementById('previewContent').textContent='Error: '+e;});
     </script>
+
+    {% elif versions|length >= 2 and not hunks %}
+    <div class="text-center text-muted py-4">No differences to display.</div>
     {% endif %}
 </div>
 
 <script>
+/* ── Detail panel merge logic ── */
+var detHunks = {{ hunks | tojson if hunks else '[]' }};
+var detFP = {{ filepath | tojson }};
+var detPicks = {};
+
+function detPick(id, side) {
+    detPicks[id] = side;
+    var bar = document.querySelector('.abar[data-hid="'+id+'"]');
+    if (bar) {
+        bar.querySelectorAll('.pb').forEach(function(b){ b.classList.remove('active'); });
+        bar.querySelectorAll('.pb').forEach(function(b){
+            if (b.getAttribute('data-side') === side) b.classList.add('active');
+        });
+    }
+    document.querySelectorAll('.crow[data-hid="'+id+'"]').forEach(function(r){
+        r.classList.remove('pk-l','pk-r','pk-b','pk-n');
+        r.classList.add({left:'pk-l',right:'pk-r',both:'pk-b',none:'pk-n'}[side]);
+    });
+    detUpdateCounts();
+}
+
+function detPickAll(side) {
+    detHunks.forEach(function(h){ if (h.type==='conflict') detPick(h.id, side); });
+}
+
+function detUpdateCounts() {
+    var c = detHunks.filter(function(h){return h.type==='conflict';});
+    var p = c.filter(function(h){return detPicks[h.id];});
+    var cc = document.getElementById('detCC');
+    var pc = document.getElementById('detPC');
+    var rm = document.getElementById('detRM');
+    if (cc) cc.textContent = c.length;
+    if (pc) pc.textContent = p.length;
+    var rem = c.length - p.length;
+    if (rm) {
+        if (rem > 0) { rm.textContent = rem + ' remaining'; rm.className = 'text-warning'; }
+        else if (c.length > 0) { rm.textContent = 'All resolved'; rm.className = 'text-success'; }
+        else { rm.textContent = ''; }
+    }
+}
+
+function detBuild() {
+    var lines = [];
+    for (var i = 0; i < detHunks.length; i++) {
+        var h = detHunks[i];
+        if (h.type === 'equal') { lines = lines.concat(h.lines_a); continue; }
+        var p = detPicks[h.id];
+        if (!p) return null;
+        if (p === 'left') lines = lines.concat(h.lines_a);
+        else if (p === 'right') lines = lines.concat(h.lines_b);
+        else if (p === 'both') { lines = lines.concat(h.lines_a); lines = lines.concat(h.lines_b); }
+    }
+    return lines.join('\n') + '\n';
+}
+
+function detSave() {
+    var unpicked = detHunks.filter(function(h){return h.type==='conflict' && !detPicks[h.id];});
+    if (unpicked.length > 0) {
+        alert(unpicked.length + ' change(s) not resolved.');
+        var r = document.querySelector('.abar[data-hid="'+unpicked[0].id+'"]');
+        if (r) r.scrollIntoView({block:'center', behavior:'smooth'});
+        return;
+    }
+    var content = detBuild();
+    if (content === null) return;
+    var btn = document.getElementById('detSaveBtn');
+    btn.disabled = true; btn.textContent = 'Saving...';
+    fetch('/api/save-merge', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({filepath:detFP, content:content})
+    }).then(function(r){return r.json();}).then(function(data){
+        if (data.ok) {
+            btn.textContent = '\u2713 Resolved'; btn.classList.replace('btn-primary','btn-success');
+            // Update the sidebar file status
+            if (typeof updateFileItemDOM === 'function' && currentItem) {
+                updateFileItemDOM(currentItem, true);
+            }
+            if (typeof markFileResolved === 'function') {
+                markFileResolved(detFP, true);
+            }
+            // Update dir badges
+            if (typeof updateDirBadge === 'function') {
+                document.querySelectorAll('.dir-wrapper[data-path]').forEach(function(w){ updateDirBadge(w); });
+            }
+        } else { alert('Error: '+(data.error||'Unknown')); btn.disabled=false; btn.textContent='Save'; }
+    }).catch(function(e){ alert('Error: '+e); btn.disabled=false; btn.textContent='Save'; });
+}
+
+function detFold(foldRow, hid) {
+    var rows = document.querySelectorAll('[data-fid="'+hid+'"]');
+    var hidden = rows.length > 0 && rows[0].classList.contains('fhide');
+    rows.forEach(function(r){ r.classList.toggle('fhide'); });
+    foldRow.querySelector('td').textContent = hidden ? 'click to collapse' : rows.length + ' unchanged lines';
+}
+
 function resolveVersion(fp, idx) {
     fetch('/resolve', {
         method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'},
         body:'filepath='+encodeURIComponent(fp)+'&selected_index='+idx+'&next_path='
-    }).then(()=>{ if (currentItem) loadDetail(fp, currentItem); });
+    }).then(function(){ if (currentItem) loadDetail(fp, currentItem); });
 }
+
 function loadDetailDiff(fp, a, b) {
-    const panel = document.getElementById('detailPanel');
+    var panel = document.getElementById('detailPanel');
     panel.innerHTML = '<div class="text-center p-4 text-muted">Loading...</div>';
     fetch('/api/file-detail/'+fp+'?diff_a='+a+'&diff_b='+b)
-        .then(r=>r.text()).then(html=>{panel.innerHTML=html;currentHunkIdx=-1;})
-        .catch(e=>{panel.innerHTML='<div class="text-danger p-4">'+e+'</div>';});
+        .then(function(r){return r.text();}).then(function(html){panel.innerHTML=html;})
+        .catch(function(e){panel.innerHTML='<div class="text-danger p-4">'+e+'</div>';});
 }
-currentHunkIdx = -1;
+
+detUpdateCounts();
 </script>

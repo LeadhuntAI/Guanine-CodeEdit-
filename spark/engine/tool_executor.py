@@ -146,6 +146,41 @@ def parse_tool_args(raw_args: str) -> dict:
 # Tool execution
 # ---------------------------------------------------------------------------
 
+def _unpack_kwargs(args: dict) -> dict:
+    """Fix model quirk where real arguments are wrapped in a ``kwargs`` string.
+
+    Some models (notably kimi-k2.5) emit tool calls like::
+
+        {"path": ".", "kwargs": "{\\"path\\": \\"CLAUDE.md\\"}"}
+
+    The real arguments are inside ``kwargs`` as a JSON string.  When detected,
+    merge them into the top-level dict (kwargs values win over placeholders).
+    """
+    raw_kwargs = args.get("kwargs")
+    if not isinstance(raw_kwargs, str) or not raw_kwargs.strip():
+        return args
+
+    try:
+        inner = json.loads(raw_kwargs)
+    except (json.JSONDecodeError, TypeError):
+        return args
+
+    if not isinstance(inner, dict):
+        return args
+
+    # Merge: inner values override outer placeholders like path="."
+    merged = {k: v for k, v in args.items() if k != "kwargs"}
+    for k, v in inner.items():
+        # Only override if the outer value looks like a placeholder
+        if k not in merged or merged[k] in (".", "", None):
+            merged[k] = v
+        # If outer has a real value and inner also has one, prefer inner
+        # (the model put the real data in kwargs)
+        elif k in merged:
+            merged[k] = v
+    return merged
+
+
 def execute_tool_call(
     available_tools: dict[str, Any],
     tool_name: str,
@@ -178,6 +213,10 @@ def execute_tool_call(
             args = parse_tool_args(tool_args)
         else:
             args = dict(tool_args) if tool_args else {}
+
+        # Fix model quirk: some models wrap real args inside a "kwargs" string
+        # e.g. {"path": ".", "kwargs": "{\"path\": \"CLAUDE.md\"}"}
+        args = _unpack_kwargs(args)
 
         # Filter args to match the function's actual signature
         args = _filter_args(func, args)

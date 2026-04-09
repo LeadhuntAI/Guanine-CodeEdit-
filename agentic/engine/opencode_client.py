@@ -136,7 +136,7 @@ class OpenCodeClient:
         except OpenCodeError:
             return False
 
-    def ensure_server(self, port: int = 4096) -> None:
+    def ensure_server(self, port: int = 4096, cwd: Optional[str] = None) -> None:
         """Start the OpenCode server if it's not already running.
 
         Searches for the `opencode` binary on PATH. Starts it with
@@ -144,6 +144,11 @@ class OpenCodeClient:
         binding fails on some Windows/Bun combinations). The actual
         port is parsed from the server's "listening on" output line and
         ``self.base_url`` is updated accordingly.
+
+        Args:
+            port: Ignored (always uses 0 for auto-assign).
+            cwd: Working directory for the server process. Should be the
+                 project root so OpenCode reads the local ``opencode.json``.
 
         Raises:
             OpenCodeError: If the binary is not found or server fails to start.
@@ -177,6 +182,7 @@ class OpenCodeClient:
 
         self._process = subprocess.Popen(
             cmd, env=env,
+            cwd=cwd,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,  # merge stderr into stdout
         )
@@ -303,7 +309,7 @@ class OpenCodeClient:
         }
         if agent:
             payload['agent'] = agent
-        return self._post(f'/session/{session_id}/message', data=payload)
+        return self._post(f'/session/{session_id}/message', data=payload, timeout=300)
 
     def get_messages(self, session_id: str) -> list:
         """Get message history for a session."""

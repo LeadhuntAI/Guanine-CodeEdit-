@@ -89,11 +89,19 @@ def get_or_start_repo_server(repo_id: str, api_key: Optional[str] = None,
             _cleanup_server(repo_id)
 
         from agentic.engine.opencode_client import OpenCodeClient
+        import agent_schema
+        repo = agent_schema.get_repo(repo_id)
+        repo_path = repo['repo_path'] if repo else None
+
+        # Write per-project opencode.json so the server discovers the
+        # correct MCP servers scoped to this project.
+        if repo_path:
+            write_project_opencode_config(repo_path)
+
         # Start with a placeholder URL; ensure_server will update base_url
         # once the server reports its actual port.
         client = OpenCodeClient('http://127.0.0.1:0', password=password, api_key=api_key)
-        ensure_opencode_mcp_config()
-        client.ensure_server(port=0)
+        client.ensure_server(port=0, cwd=repo_path)
 
         # Read back the actual port the server bound to
         actual_port = client._actual_port or 0
@@ -161,45 +169,132 @@ def list_running_servers() -> list[dict]:
         return result
 
 
+def cleanup_orphaned_processes():
+    """Kill OpenCode processes not tracked by Guanine.
+
+    On Windows, orphaned opencode.exe processes leak when Guanine exits
+    without proper cleanup. This finds and kills them.
+    """
+    import subprocess as _sp
+    tracked_pids = set()
+    with _port_lock:
+        for info in _repo_servers.values():
+            proc = info.get('process')
+            if proc:
+                tracked_pids.add(proc.pid)
+
+    try:
+        # Get all opencode.exe PIDs
+        result = _sp.run(
+            ['tasklist', '/FI', 'IMAGENAME eq opencode.exe', '/FO', 'CSV', '/NH'],
+            capture_output=True, text=True, timeout=10
+        )
+        killed = 0
+        for line in result.stdout.strip().splitlines():
+            parts = line.strip('"').split('","')
+            if len(parts) >= 2:
+                try:
+                    pid = int(parts[1])
+                    if pid not in tracked_pids:
+                        _sp.run(['taskkill', '/PID', str(pid), '/F'],
+                                capture_output=True, timeout=5)
+                        killed += 1
+                except (ValueError, _sp.TimeoutExpired):
+                    pass
+        if killed:
+            logger.info("Cleaned up %d orphaned OpenCode processes", killed)
+        return killed
+    except Exception as e:
+        logger.warning("Orphan cleanup failed: %s", e)
+        return 0
+
+
 # Clean up on process exit
 atexit.register(stop_all_servers)
 
 
-def ensure_opencode_mcp_config():
-    """Ensure OpenCode's global config includes the Guanine MCP server.
+def write_project_opencode_config(repo_path: str) -> str:
+    """Write a per-project ``opencode.json`` with Guanine + jcodemunch MCP.
 
-    Writes to ~/.config/opencode/config.json if the 'guanine' entry
-    is missing. OpenCode reads this on startup to discover MCP servers.
+    Each project gets its own ``opencode.json`` so that when OpenCode is
+    started with ``cwd=repo_path`` it discovers the correct MCP servers
+    scoped to that project. This avoids global config collisions when
+    multiple projects run OpenCode simultaneously.
+
+    The Guanine MCP server command always uses absolute paths so it works
+    regardless of the machine's working directory.
+
+    Args:
+        repo_path: Absolute path to the project/repo root.
+
+    Returns:
+        Path to the written ``opencode.json``.
     """
-    config_dir = os.path.join(os.path.expanduser('~'), '.config', 'opencode')
-    config_path = os.path.join(config_dir, 'config.json')
-
-    existing = {}
-    if os.path.isfile(config_path):
-        try:
-            with open(config_path, 'r', encoding='utf-8') as f:
-                existing = json.load(f)
-        except (json.JSONDecodeError, OSError):
-            pass
-
-    mcp = existing.get('mcp', {})
-    if 'guanine' in mcp:
-        return  # Already configured
-
-    # Build the command to run agent_mcp_server.py from this project
     import sys
-    server_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'agent_mcp_server.py')
-    mcp['guanine'] = {
-        'type': 'local',
-        'command': [sys.executable, server_script],
-        'enabled': True,
-    }
-    existing['mcp'] = mcp
+    guanine_dir = os.path.dirname(os.path.abspath(__file__))
+    server_script = os.path.join(guanine_dir, 'agent_mcp_server.py')
 
-    os.makedirs(config_dir, exist_ok=True)
+    config = {
+        '$schema': 'https://opencode.ai/config.json',
+        'mcp': {
+            'guanine': {
+                'type': 'local',
+                'command': [sys.executable, server_script],
+                'enabled': True,
+            },
+        },
+    }
+
+    # --- Discover jcodemunch from the project's .mcp.json ---
+    mcp_json_path = os.path.join(repo_path, '.mcp.json')
+    if not os.path.isfile(mcp_json_path):
+        # Fall back to Guanine's own .mcp.json
+        mcp_json_path = os.path.join(guanine_dir, '.mcp.json')
+
+    if os.path.isfile(mcp_json_path):
+        try:
+            with open(mcp_json_path, 'r', encoding='utf-8') as f:
+                project_mcp = json.load(f)
+            jcm = project_mcp.get('mcpServers', {}).get('jcodemunch', {})
+            if jcm:
+                jcm_command = [jcm['command']] + jcm.get('args', [])
+                entry = {
+                    'type': 'local',
+                    'command': jcm_command,
+                    'enabled': True,
+                }
+                if jcm.get('env'):
+                    entry['environment'] = jcm['env']
+                config['mcp']['jcodemunch'] = entry
+        except (json.JSONDecodeError, OSError) as e:
+            logger.warning("Could not read %s for jcodemunch: %s", mcp_json_path, e)
+
+    # --- Write opencode.json to the project root ---
+    config_path = os.path.join(repo_path, 'opencode.json')
     with open(config_path, 'w', encoding='utf-8') as f:
-        json.dump(existing, f, indent=2)
-    logger.info("Wrote Guanine MCP config to %s", config_path)
+        json.dump(config, f, indent=2)
+    logger.info("Wrote per-project OpenCode config to %s", config_path)
+
+    # Ensure opencode.json is in .gitignore so it doesn't get committed
+    _ensure_gitignore_entry(repo_path, 'opencode.json')
+
+    return config_path
+
+
+def _ensure_gitignore_entry(repo_path: str, entry: str):
+    """Add an entry to .gitignore if not already present."""
+    gitignore = os.path.join(repo_path, '.gitignore')
+    if os.path.isfile(gitignore):
+        with open(gitignore, 'r', encoding='utf-8', errors='replace') as f:
+            lines = f.read().splitlines()
+        if entry in lines:
+            return
+    else:
+        lines = []
+
+    lines.append(entry)
+    with open(gitignore, 'w', encoding='utf-8') as f:
+        f.write('\n'.join(lines) + '\n')
 
 
 def get_repo_settings(repo_id: str) -> dict:
@@ -484,8 +579,10 @@ class OpenCodeBackend(AgentBackend):
         )
 
     def _client(self) -> 'OpenCodeClient':
-        from agentic.engine.opencode_client import OpenCodeClient
-        return OpenCodeClient(self._get_url(), password=self.password)
+        if not hasattr(self, '_cached_client') or self._cached_client is None:
+            from agentic.engine.opencode_client import OpenCodeClient
+            self._cached_client = OpenCodeClient(self._get_url(), password=self.password)
+        return self._cached_client
 
     def is_ready(self) -> bool:
         info = get_repo_server(self.repo_id)

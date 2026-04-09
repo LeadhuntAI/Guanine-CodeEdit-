@@ -3,17 +3,39 @@ Agent session schema and CRUD helpers for the sandboxed coding agent review syst
 
 Global database: sessions/agent_registry.db
 Tracks repos, agent sessions, checked-out files, conversations, and review decisions.
+
+Architecture:
+    - Thread-local SQLite connections with WAL journaling
+    - Deterministic repo IDs via SHA-256 of normalized absolute path
+    - Session IDs include timestamp for chronological sorting
+    - Foreign keys enforce referential integrity across all tables
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import sqlite3
 import threading
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
+
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
+
+logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Status constants
+# ---------------------------------------------------------------------------
+
+VALID_SESSION_STATUSES = frozenset({
+    'pending', 'running', 'completed', 'review', 'merged', 'rejected', 'error'
+})
+VALID_REVIEW_DECISIONS = frozenset({'accepted', 'rejected', 'edited', 'reverted'})
 
 # ---------------------------------------------------------------------------
 # Database location & connection management
@@ -30,13 +52,19 @@ def _ensure_sessions_dir():
 
 
 def get_agent_db() -> sqlite3.Connection:
-    """Get or create a thread-local connection to the global agent registry DB."""
+    """Get or create a thread-local connection to the global agent registry DB.
+
+    Connections are cached per-thread and reused across calls. If the cached
+    connection is broken (e.g., database was deleted), a new one is created.
+    WAL mode is enabled for concurrent read access during background writes.
+    """
     conn = getattr(_db_local, 'agent_db', None)
     if conn is not None:
         try:
             conn.execute('SELECT 1')
             return conn
         except sqlite3.Error:
+            logger.warning("Stale DB connection detected, reconnecting")
             conn = None
     _ensure_sessions_dir()
     conn = sqlite3.connect(REGISTRY_DB, timeout=30)
@@ -66,7 +94,15 @@ def close_agent_db():
 # ---------------------------------------------------------------------------
 
 def _init_agent_schema(conn: sqlite3.Connection):
-    """Create agent registry tables if they don't exist."""
+    """Create agent registry tables if they don't exist.
+
+    Tables:
+        repos              — Registered repositories with ignore/command config
+        agent_sessions     — Agent work sessions with lifecycle timestamps
+        session_files      — Files checked out or created during a session
+        session_conversation — Full LLM conversation log per session
+        review_decisions   — Per-file human review outcomes
+    """
     conn.executescript('''
         CREATE TABLE IF NOT EXISTS repos (
             repo_id          TEXT PRIMARY KEY,
@@ -77,25 +113,29 @@ def _init_agent_schema(conn: sqlite3.Connection):
             file_count       INTEGER DEFAULT 0,
             ignore_patterns  TEXT DEFAULT '[]',
             allowed_commands TEXT DEFAULT '[]',
-            allow_free_commands INTEGER DEFAULT 0
+            allow_free_commands INTEGER DEFAULT 0,
+            settings_json    TEXT DEFAULT '{}'
         );
 
         CREATE TABLE IF NOT EXISTS agent_sessions (
-            session_id       TEXT PRIMARY KEY,
-            repo_id          TEXT NOT NULL REFERENCES repos(repo_id),
-            workspace_path   TEXT NOT NULL,
-            task_description TEXT NOT NULL,
-            status           TEXT NOT NULL DEFAULT 'pending',
-            agent_model      TEXT,
-            external_context TEXT,
-            created_at       TEXT NOT NULL,
-            started_at       TEXT,
-            completed_at     TEXT,
-            reviewed_at      TEXT,
-            merged_at        TEXT,
-            merge_session_id TEXT,
-            workflow_json    TEXT,
-            error_message    TEXT
+            session_id         TEXT PRIMARY KEY,
+            repo_id            TEXT NOT NULL REFERENCES repos(repo_id),
+            workspace_path     TEXT NOT NULL,
+            task_description   TEXT NOT NULL,
+            status             TEXT NOT NULL DEFAULT 'pending',
+            agent_model        TEXT,
+            external_context   TEXT,
+            created_at         TEXT NOT NULL,
+            started_at         TEXT,
+            completed_at       TEXT,
+            reviewed_at        TEXT,
+            merged_at          TEXT,
+            merge_session_id   TEXT,
+            workflow_json      TEXT,
+            error_message      TEXT,
+            backend            TEXT DEFAULT 'builtin',
+            backend_session_id TEXT,
+            parent_session_id  TEXT
         );
 
         CREATE TABLE IF NOT EXISTS session_files (
@@ -135,7 +175,29 @@ def _init_agent_schema(conn: sqlite3.Connection):
         CREATE INDEX IF NOT EXISTS idx_as_status ON agent_sessions(status);
         CREATE INDEX IF NOT EXISTS idx_sf_session ON session_files(session_id);
         CREATE INDEX IF NOT EXISTS idx_sc_session ON session_conversation(session_id);
+        CREATE INDEX IF NOT EXISTS idx_rd_session ON review_decisions(session_id);
     ''')
+
+    # Backwards-compatible migration: add new columns to existing databases
+    for col, default in [('backend', "'builtin'"),
+                         ('backend_session_id', 'NULL'),
+                         ('parent_session_id', 'NULL')]:
+        try:
+            conn.execute(f'ALTER TABLE agent_sessions ADD COLUMN {col} TEXT DEFAULT {default}')
+        except Exception:
+            pass  # Column already exists
+
+    # Repos: add settings_json column
+    try:
+        conn.execute("ALTER TABLE repos ADD COLUMN settings_json TEXT DEFAULT '{}'")
+    except Exception:
+        pass
+
+    # Index on parent_session_id — must come after migration adds the column
+    try:
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_as_parent ON agent_sessions(parent_session_id)')
+    except Exception:
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -143,26 +205,46 @@ def _init_agent_schema(conn: sqlite3.Connection):
 # ---------------------------------------------------------------------------
 
 def _now_iso() -> str:
-    return datetime.now().isoformat()
+    """Return current UTC time as ISO 8601 string."""
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _repo_id(repo_path: str) -> str:
-    """Deterministic repo ID from absolute path."""
+    """Deterministic repo ID from absolute path.
+
+    Uses first 16 hex chars of SHA-256 of the normalized absolute path.
+    This ensures the same directory always gets the same ID regardless
+    of how the path is specified (relative, trailing slash, etc.).
+    """
     normalized = os.path.normpath(os.path.abspath(repo_path))
     return hashlib.sha256(normalized.encode('utf-8')).hexdigest()[:16]
 
 
 def _generate_session_id() -> str:
+    """Generate a unique session ID with embedded timestamp."""
     return f"agent_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
 
 def _workspace_path(session_id: str) -> str:
+    """Return the workspace directory path for a session."""
     return os.path.join(SESSIONS_DIR, session_id, 'workspace')
 
 
 def _row_to_dict(row: sqlite3.Row) -> dict:
     """Convert a sqlite3.Row to a plain dict."""
     return dict(row)
+
+
+def _deserialize_repo(d: dict) -> dict:
+    """Deserialize JSON fields in a repo dict."""
+    d['ignore_patterns'] = json.loads(d.get('ignore_patterns', '[]'))
+    d['allowed_commands'] = json.loads(d.get('allowed_commands', '[]'))
+    d['allow_free_commands'] = bool(d.get('allow_free_commands', 0))
+    try:
+        d['settings'] = json.loads(d.get('settings_json', '{}') or '{}')
+    except (json.JSONDecodeError, TypeError):
+        d['settings'] = {}
+    return d
 
 
 # ---------------------------------------------------------------------------
@@ -173,7 +255,21 @@ def register_repo(repo_path: str, repo_name: str,
                   ignore_patterns: Optional[list] = None,
                   allowed_commands: Optional[list] = None,
                   allow_free_commands: bool = False) -> dict:
-    """Register a repository for agent sessions. Returns repo dict."""
+    """Register a repository for agent sessions.
+
+    Args:
+        repo_path: Absolute or relative path to the repository directory.
+        repo_name: Human-readable name for the repository.
+        ignore_patterns: List of glob patterns to ignore during file listing.
+        allowed_commands: List of allowed command prefixes for run_command.
+        allow_free_commands: If True, bypass the command whitelist entirely.
+
+    Returns:
+        The registered repo dict.
+
+    Raises:
+        ValueError: If the directory does not exist.
+    """
     db = get_agent_db()
     abs_path = os.path.normpath(os.path.abspath(repo_path))
     if not os.path.isdir(abs_path):
@@ -196,34 +292,24 @@ def register_repo(repo_path: str, repo_name: str,
     ''', (rid, repo_name, abs_path, now, ignore, allowed,
           1 if allow_free_commands else 0))
     db.commit()
+    logger.info("Registered repo %s (%s) at %s", repo_name, rid, abs_path)
     return get_repo(rid)
 
 
 def get_repo(repo_id: str) -> Optional[dict]:
-    """Get a repo by ID."""
+    """Get a repo by ID. Returns None if not found."""
     db = get_agent_db()
     row = db.execute('SELECT * FROM repos WHERE repo_id = ?', (repo_id,)).fetchone()
     if row is None:
         return None
-    d = _row_to_dict(row)
-    d['ignore_patterns'] = json.loads(d['ignore_patterns'])
-    d['allowed_commands'] = json.loads(d['allowed_commands'])
-    d['allow_free_commands'] = bool(d['allow_free_commands'])
-    return d
+    return _deserialize_repo(_row_to_dict(row))
 
 
 def list_repos() -> list[dict]:
-    """List all registered repos."""
+    """List all registered repos, ordered by registration date (newest first)."""
     db = get_agent_db()
     rows = db.execute('SELECT * FROM repos ORDER BY registered_at DESC').fetchall()
-    result = []
-    for row in rows:
-        d = _row_to_dict(row)
-        d['ignore_patterns'] = json.loads(d['ignore_patterns'])
-        d['allowed_commands'] = json.loads(d['allowed_commands'])
-        d['allow_free_commands'] = bool(d['allow_free_commands'])
-        result.append(d)
-    return result
+    return [_deserialize_repo(_row_to_dict(row)) for row in rows]
 
 
 def update_repo(repo_id: str, **kwargs) -> Optional[dict]:
@@ -231,11 +317,13 @@ def update_repo(repo_id: str, **kwargs) -> Optional[dict]:
     allow_free_commands, last_scanned_at, file_count."""
     db = get_agent_db()
     allowed_fields = {'repo_name', 'ignore_patterns', 'allowed_commands',
-                      'allow_free_commands', 'last_scanned_at', 'file_count'}
+                      'allow_free_commands', 'last_scanned_at', 'file_count',
+                      'settings_json'}
     updates = []
     values = []
     for key, val in kwargs.items():
         if key not in allowed_fields:
+            logger.warning("Ignoring unknown repo field: %s", key)
             continue
         if key in ('ignore_patterns', 'allowed_commands'):
             val = json.dumps(val)
@@ -252,9 +340,8 @@ def update_repo(repo_id: str, **kwargs) -> Optional[dict]:
 
 
 def delete_repo(repo_id: str) -> bool:
-    """Delete a repo and all its sessions."""
+    """Delete a repo and cascade-delete all its sessions and child data."""
     db = get_agent_db()
-    # Delete in dependency order
     sessions = db.execute(
         'SELECT session_id FROM agent_sessions WHERE repo_id = ?', (repo_id,)
     ).fetchall()
@@ -263,6 +350,7 @@ def delete_repo(repo_id: str) -> bool:
     db.execute('DELETE FROM agent_sessions WHERE repo_id = ?', (repo_id,))
     db.execute('DELETE FROM repos WHERE repo_id = ?', (repo_id,))
     db.commit()
+    logger.info("Deleted repo %s and %d sessions", repo_id, len(sessions))
     return True
 
 
@@ -273,8 +361,28 @@ def delete_repo(repo_id: str) -> bool:
 def create_session(repo_id: str, task_description: str,
                    agent_model: Optional[str] = None,
                    external_context: Optional[str] = None,
-                   workflow_json: Optional[dict] = None) -> dict:
-    """Create a new agent session with its workspace directory."""
+                   workflow_json: Optional[dict] = None,
+                   backend: Optional[str] = None,
+                   backend_session_id: Optional[str] = None,
+                   parent_session_id: Optional[str] = None) -> dict:
+    """Create a new agent session with its workspace directory.
+
+    Args:
+        repo_id: ID of the registered repository.
+        task_description: Human-readable description of the agent's task.
+        agent_model: Optional model identifier (e.g., 'gpt-4o').
+        external_context: Optional context string passed from external systems.
+        workflow_json: Optional workflow definition dict.
+        backend: Agent backend name ('builtin', 'opencode', etc.). Defaults to 'builtin'.
+        backend_session_id: Backend-specific session reference (e.g., OpenCode session ID).
+        parent_session_id: ID of the parent session for orchestrator-spawned sub-sessions.
+
+    Returns:
+        The created session dict.
+
+    Raises:
+        ValueError: If the repo is not found.
+    """
     db = get_agent_db()
     repo = get_repo(repo_id)
     if repo is None:
@@ -288,17 +396,24 @@ def create_session(repo_id: str, task_description: str,
     db.execute('''
         INSERT INTO agent_sessions
         (session_id, repo_id, workspace_path, task_description, status,
-         agent_model, external_context, created_at, workflow_json)
-        VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?)
+         agent_model, external_context, created_at, workflow_json,
+         backend, backend_session_id, parent_session_id)
+        VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?)
     ''', (sid, repo_id, ws, task_description,
           agent_model, external_context, now,
-          json.dumps(workflow_json) if workflow_json else None))
+          json.dumps(workflow_json) if workflow_json else None,
+          backend or 'builtin', backend_session_id, parent_session_id))
     db.commit()
+    logger.info("Created session %s for repo %s (backend=%s)", sid, repo_id, backend or 'builtin')
     return get_session(sid)
 
 
 def get_session(session_id: str) -> Optional[dict]:
-    """Get a session by ID, including file stats."""
+    """Get a session by ID, including aggregated file stats.
+
+    The returned dict includes a 'file_stats' key with per-status counts
+    of files and total lines added/removed.
+    """
     db = get_agent_db()
     row = db.execute(
         'SELECT * FROM agent_sessions WHERE session_id = ?', (session_id,)
@@ -315,22 +430,30 @@ def get_session(session_id: str) -> Optional[dict]:
     # Attach file summary
     files = db.execute('''
         SELECT status, COUNT(*) as cnt,
-               SUM(lines_added) as total_added,
-               SUM(lines_removed) as total_removed
+               COALESCE(SUM(lines_added), 0) as total_added,
+               COALESCE(SUM(lines_removed), 0) as total_removed
         FROM session_files WHERE session_id = ?
         GROUP BY status
     ''', (session_id,)).fetchall()
     d['file_stats'] = {r['status']: {
         'count': r['cnt'],
-        'lines_added': r['total_added'] or 0,
-        'lines_removed': r['total_removed'] or 0
+        'lines_added': r['total_added'],
+        'lines_removed': r['total_removed']
     } for r in files}
     return d
 
 
 def list_sessions(repo_id: Optional[str] = None,
                   status: Optional[str] = None) -> list[dict]:
-    """List agent sessions with optional filters."""
+    """List agent sessions with optional filters.
+
+    Args:
+        repo_id: Filter by repository ID.
+        status: Filter by session status.
+
+    Returns:
+        List of session dicts ordered by creation date (newest first).
+    """
     db = get_agent_db()
     query = 'SELECT * FROM agent_sessions WHERE 1=1'
     params = []
@@ -338,6 +461,8 @@ def list_sessions(repo_id: Optional[str] = None,
         query += ' AND repo_id = ?'
         params.append(repo_id)
     if status:
+        if status not in VALID_SESSION_STATUSES:
+            logger.warning("Filtering by unknown status: %s", status)
         query += ' AND status = ?'
         params.append(status)
     query += ' ORDER BY created_at DESC'
@@ -354,13 +479,30 @@ def list_sessions(repo_id: Optional[str] = None,
     return result
 
 
+def get_child_sessions(parent_session_id: str) -> list[dict]:
+    """Get all sub-sessions spawned by a parent session.
+
+    Returns:
+        List of session dicts ordered by creation date (oldest first).
+    """
+    db = get_agent_db()
+    rows = db.execute(
+        'SELECT * FROM agent_sessions WHERE parent_session_id = ? ORDER BY created_at ASC',
+        (parent_session_id,)
+    ).fetchall()
+    return [_row_to_dict(row) for row in rows]
+
+
 def update_session_status(session_id: str, status: str,
                           error_message: Optional[str] = None) -> Optional[dict]:
-    """Update session status and corresponding timestamp."""
+    """Update session status and set the corresponding lifecycle timestamp.
+
+    Automatically sets started_at, completed_at, reviewed_at, or merged_at
+    based on the new status value.
+    """
     db = get_agent_db()
-    valid = {'pending', 'running', 'completed', 'review', 'merged', 'rejected', 'error'}
-    if status not in valid:
-        raise ValueError(f"Invalid status: {status}. Must be one of {valid}")
+    if status not in VALID_SESSION_STATUSES:
+        raise ValueError(f"Invalid status: {status}. Must be one of {VALID_SESSION_STATUSES}")
 
     now = _now_iso()
     timestamp_map = {
@@ -388,6 +530,7 @@ def update_session_status(session_id: str, status: str,
         values
     )
     db.commit()
+    logger.info("Session %s status -> %s", session_id, status)
     return get_session(session_id)
 
 
@@ -409,7 +552,7 @@ def _delete_session_data(db: sqlite3.Connection, session_id: str):
 
 
 def delete_session(session_id: str) -> bool:
-    """Delete an agent session and its workspace."""
+    """Delete an agent session, its child data, and its workspace directory."""
     db = get_agent_db()
     session = get_session(session_id)
     if session is None:
@@ -424,6 +567,7 @@ def delete_session(session_id: str) -> bool:
     session_dir = os.path.join(SESSIONS_DIR, session_id)
     if os.path.isdir(session_dir):
         shutil.rmtree(session_dir, ignore_errors=True)
+    logger.info("Deleted session %s", session_id)
     return True
 
 
@@ -433,7 +577,11 @@ def delete_session(session_id: str) -> bool:
 
 def record_file_checkout(session_id: str, relative_path: str,
                          checkout_hash: str) -> dict:
-    """Record that a file was checked out into the workspace."""
+    """Record that a file was checked out into the workspace.
+
+    Uses INSERT ... ON CONFLICT to handle re-checkouts of the same file,
+    resetting stats to their initial values.
+    """
     db = get_agent_db()
     now = _now_iso()
     db.execute('''
@@ -456,7 +604,16 @@ def record_file_checkout(session_id: str, relative_path: str,
 def update_file_stats(session_id: str, relative_path: str,
                       current_hash: str, lines_added: int,
                       lines_removed: int, status: str = 'modified'):
-    """Update file stats after an agent edit."""
+    """Update file stats after an agent edit.
+
+    Args:
+        session_id: The session owning the file.
+        relative_path: Path relative to workspace root.
+        current_hash: SHA-256 hash of the current file content.
+        lines_added: Number of lines added compared to original.
+        lines_removed: Number of lines removed compared to original.
+        status: New file status (default: 'modified').
+    """
     db = get_agent_db()
     now = _now_iso()
     db.execute('''
@@ -479,13 +636,18 @@ def record_new_file(session_id: str, relative_path: str,
                                    current_hash, lines_added, lines_removed,
                                    status, checked_out_at, last_modified_at)
         VALUES (?, ?, '', ?, ?, 0, 'new', ?, ?)
+        ON CONFLICT(session_id, relative_path) DO UPDATE SET
+            current_hash = excluded.current_hash,
+            lines_added = excluded.lines_added,
+            status = 'new',
+            last_modified_at = excluded.last_modified_at
     ''', (session_id, relative_path, current_hash, line_count, now, now))
     db.commit()
 
 
 def get_session_files(session_id: str,
                       status: Optional[str] = None) -> list[dict]:
-    """List files in an agent session."""
+    """List files in an agent session, optionally filtered by status."""
     db = get_agent_db()
     query = 'SELECT * FROM session_files WHERE session_id = ?'
     params = [session_id]
@@ -516,7 +678,7 @@ def save_conversation_message(session_id: str, role: str, content: Optional[str]
                               tool_call_id: Optional[str] = None,
                               tool_calls: Optional[list] = None,
                               layer_index: Optional[int] = None):
-    """Save a conversation message for an agent session."""
+    """Append a conversation message to a session's history."""
     db = get_agent_db()
     now = _now_iso()
     db.execute('''
@@ -530,7 +692,7 @@ def save_conversation_message(session_id: str, role: str, content: Optional[str]
 
 
 def get_conversation(session_id: str) -> list[dict]:
-    """Get the full conversation history for a session."""
+    """Get the full ordered conversation history for a session."""
     db = get_agent_db()
     rows = db.execute('''
         SELECT * FROM session_conversation
@@ -555,11 +717,14 @@ def get_conversation(session_id: str) -> list[dict]:
 def record_review_decision(session_id: str, relative_path: str,
                            decision: str,
                            reviewer_notes: Optional[str] = None):
-    """Record a review decision for a file."""
+    """Record or update a review decision for a file.
+
+    Uses UPSERT semantics — calling this again for the same file
+    overwrites the previous decision.
+    """
     db = get_agent_db()
-    valid = {'accepted', 'rejected', 'edited'}
-    if decision not in valid:
-        raise ValueError(f"Invalid decision: {decision}. Must be one of {valid}")
+    if decision not in VALID_REVIEW_DECISIONS:
+        raise ValueError(f"Invalid decision: {decision}. Must be one of {VALID_REVIEW_DECISIONS}")
     now = _now_iso()
     db.execute('''
         INSERT INTO review_decisions (session_id, relative_path, decision,
@@ -584,7 +749,11 @@ def get_review_decisions(session_id: str) -> list[dict]:
 
 
 def get_review_summary(session_id: str) -> dict:
-    """Get a summary of review progress for a session."""
+    """Get a summary of review progress for a session.
+
+    Returns:
+        Dict with keys: total_files, reviewed, accepted, rejected, edited, pending.
+    """
     db = get_agent_db()
     total_modified = db.execute('''
         SELECT COUNT(*) FROM session_files

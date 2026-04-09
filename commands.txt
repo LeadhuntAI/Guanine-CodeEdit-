@@ -3,5 +3,9 @@ claude --resume "file-recovery-merger-tool"
 
 cd C:\Projects\360Marketing\Guanine(CodeEdit)
 .venv\Scripts\activate
+python file_merger.py 
 
-python spark/init.py --iterations 2 --debug
+python spark/init.py --iterations 2 --debug --mode fill-gaps
+python spark/init.py--dashboard 
+
+claude --dangerously-skip-permissions

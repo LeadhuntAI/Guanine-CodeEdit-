@@ -1,5 +1,8 @@
 # CLAUDE.md — [PROJECT_NAME]
 
+> **⚠️ CRITICAL INSTRUCTION — READ FIRST:**
+> Challenge wrong assumptions. If the user's approach has flaws, say so directly — explain why and propose a better alternative. Never confirm something works without actually verifying it in detail. Always focus on delivering excellent performance and ensure all ideas and implementations are refined to the highest standard. Do not pad responses with filler praise or soften technical assessments.
+
 ## Project Overview
 
 **[PROJECT_NAME]** — [2-3 sentence description of what this project does and why it exists].

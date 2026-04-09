@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% block title_suffix %} - Run #{{ detail.run.id }}{% endblock %}
+
+{% block content %}
+<h1><a href="/runs" style="color: var(--text-dim);">Runs</a> / Run #{{ detail.run.id }}</h1>
+
+<div class="card" style="margin-bottom: 24px;">
+  <table>
+    <tr><td style="color: var(--text-dim); width: 160px;">Mode</td><td><span class="badge badge-blue">{{ detail.run.mode }}</span></td></tr>
+    <tr><td style="color: var(--text-dim);">Status</td><td>
+      {% if detail.run.status == 'completed' %}<span class="badge badge-green">{{ detail.run.status }}</span>
+      {% else %}<span class="badge badge-red">{{ detail.run.status }}</span>{% endif %}
+    </td></tr>
+    <tr><td style="color: var(--text-dim);">Started</td><td>{{ detail.run.started_at }}</td></tr>
+    <tr><td style="color: var(--text-dim);">Completed</td><td>{{ detail.run.completed_at or '-' }}</td></tr>
+    <tr><td style="color: var(--text-dim);">Iterations</td><td>{{ detail.run.iterations_completed or 0 }} / {{ detail.run.iterations_planned or '?' }}</td></tr>
+    {% if detail.run.config_snapshot %}
+    <tr><td style="color: var(--text-dim);">Config</td><td style="font-size: 11px; word-break: break-all;">{{ detail.run.config_snapshot[:300] }}</td></tr>
+    {% endif %}
+  </table>
+</div>
+
+{% if detail.area_results %}
+<h2>Area Results</h2>
+<table>
+  <thead><tr><th>Area</th><th>Phase</th><th>Quality</th><th>Status</th><th>Files Expected</th><th>Files Analyzed</th><th>Errors</th><th>Doc Path</th><th>Detail</th></tr></thead>
+  <tbody>
+  {% for r in detail.area_results %}
+  <tr>
+    <td>{{ r.area_name }}</td>
+    <td>{{ r.phase }}</td>
+    <td>
+      {% if r.quality == 'complete' %}<span class="badge badge-green">complete</span>
+      {% elif r.quality == 'partial' %}<span class="badge badge-yellow">partial</span>
+      {% elif r.quality == 'failed' %}<span class="badge badge-red">failed</span>
+      {% else %}<span class="badge badge-grey">{{ r.quality }}</span>{% endif %}
+    </td>
+    <td>{{ r.status }}</td>
+    <td>{{ r.files_expected or 0 }}</td>
+    <td>{{ r.files_analyzed or 0 }}</td>
+    <td>{% if r.tool_errors %}<span style="color: var(--red)">{{ r.tool_errors }}</span>{% else %}0{% endif %}</td>
+    <td style="font-size: 11px;">{{ r.doc_path or '-' }}</td>
+    <td style="font-size: 11px; color: var(--text-dim);">{{ (r.detail or '')[:100] }}</td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+{% if detail.area_plan %}
+<h2>Area Plan</h2>
+<div class="card">
+  {% if detail.area_plan.areas %}
+  <table>
+    <thead><tr><th>Area</th><th>Description</th><th>Priority</th><th>Patterns</th></tr></thead>
+    <tbody>
+    {% for a in detail.area_plan.areas %}
+    <tr>
+      <td>{{ a.name }}</td>
+      <td style="font-family: sans-serif; font-size: 12px;">{{ (a.description or '')[:120] }}</td>
+      <td><span class="badge {% if a.priority == 1 %}badge-red{% elif a.priority == 2 %}badge-yellow{% else %}badge-grey{% endif %}">P{{ a.priority }}</span></td>
+      <td style="font-size: 11px;">{{ a.file_patterns|join(', ') if a.file_patterns else '-' }}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+  {% if detail.area_plan.rationale %}
+  <div style="margin-top: 12px; font-size: 12px; color: var(--text-dim); font-family: sans-serif;">{{ detail.area_plan.rationale }}</div>
+  {% endif %}
+</div>
+{% endif %}
+
+{% if detail.iteration_states %}
+<h2>Iteration States</h2>
+<table>
+  <thead><tr><th>Iter</th><th>Phase</th><th>Area</th><th>Status</th><th>Started</th><th>Completed</th></tr></thead>
+  <tbody>
+  {% for s in detail.iteration_states %}
+  <tr>
+    <td>{{ s.iteration }}</td>
+    <td>{{ s.phase }}</td>
+    <td>{{ s.area_name or '-' }}</td>
+    <td>
+      {% if s.status == 'completed' %}<span class="badge badge-green">{{ s.status }}</span>
+      {% elif s.status == 'running' %}<span class="badge badge-purple">{{ s.status }}</span>
+      {% else %}<span class="badge badge-grey">{{ s.status }}</span>{% endif %}
+    </td>
+    <td style="font-size: 11px;">{{ s.started_at or '-' }}</td>
+    <td style="font-size: 11px;">{{ s.completed_at or '-' }}</td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% endblock %}

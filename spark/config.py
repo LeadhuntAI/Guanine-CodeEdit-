@@ -23,6 +23,11 @@ DEFAULT_MODELS: dict[str, str] = {
     "library": "anthropic/claude-opus-4.6",
 }
 
+# Fallback models for context overflow (1M+ context window)
+CONTEXT_OVERFLOW_FALLBACKS: dict[str, str] = {
+    "explorer": "google/gemini-3-flash-preview-20251217",
+}
+
 
 @dataclass
 class SparkConfig:
@@ -75,21 +80,33 @@ def _load_config_from_file(path: Path) -> Optional[SparkConfig]:
 
 
 def validate_api_key(api_key: str) -> tuple[bool, str]:
-    """Test an OpenRouter API key with a minimal call.
+    """Test an OpenRouter API key via the /auth/key endpoint.
 
-    Makes a cheap chat completion call (max_tokens=1) to verify the key works.
     Returns (True, "") on success or (False, error_message) on failure.
+    No LLM call is made — just checks credentials and credit balance.
     """
-    from spark.engine.openrouter import OpenRouterClient
+    import urllib.request
+    import urllib.error
 
+    url = "https://openrouter.ai/api/v1/auth/key"
+    req = urllib.request.Request(url, headers={"Authorization": f"Bearer {api_key}"})
     try:
-        client = OpenRouterClient(api_key=api_key)
-        client.chat_completion(
-            model="openai/gpt-4o-mini",
-            messages=[{"role": "user", "content": "hi"}],
-            max_tokens=1,
-        )
-        return True, ""
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            body = json.loads(resp.read().decode("utf-8"))
+            # body.data has: label, usage, limit, is_free_tier, rate_limit
+            data = body.get("data", {})
+            usage = data.get("usage", 0)
+            limit = data.get("limit")
+            if limit and usage >= limit:
+                return False, f"Credit limit reached ({usage}/{limit})"
+            return True, ""
+    except urllib.error.HTTPError as exc:
+        detail = ""
+        try:
+            detail = exc.read().decode("utf-8", errors="replace")
+        except Exception:
+            pass
+        return False, f"HTTP {exc.code}: {detail[:200]}"
     except Exception as e:
         return False, str(e)
 

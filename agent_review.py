@@ -17,13 +17,15 @@ import json
 import logging
 import os
 import shutil
+import subprocess
+import sys
 import time
 from datetime import datetime
 from typing import Optional
 
 from flask import (
     Blueprint, render_template, request, redirect, url_for,
-    flash, jsonify, Response,
+    flash, jsonify, Response, stream_with_context,
 )
 
 import agent_schema
@@ -72,18 +74,53 @@ DEFAULT_CODING_MODELS = [
 ]
 DEFAULT_MODEL_ID = 'glm-5.1'
 
-_SANDBOX_PREFIX = """[SYSTEM] You are working inside Guanine's sandboxed review system.
+_SANDBOX_PREFIX = """[SYSTEM — MANDATORY INSTRUCTIONS — READ BEFORE DOING ANYTHING]
 
-RULES:
-- Use the guanine MCP tools for ALL file modifications
-- NEVER use native write or edit tools to modify project files
-- Use mcp_guanine_checkout_file to get files into your workspace before editing
-- Use mcp_guanine_write_file to write changes (these go to an isolated workspace)
-- Use mcp_guanine_read_file or native read to view files (reading is unrestricted)
-- Call mcp_guanine_signal_done when your task is complete
-- Read CLAUDE.md and AGENTS.md from the repo root for project context and conventions
+You are operating inside Guanine's sandboxed code review system. A human will review
+every change you make before it touches the real codebase. This requires a specific workflow.
 
-Your edits will be reviewed by a human before being merged into the actual codebase.
+## FILE EDITING — CRITICAL
+
+You have TWO sets of file tools available. You MUST use the right ones:
+
+### ALLOWED for editing (Guanine MCP tools — sandbox-safe):
+- mcp_guanine_checkout_file(path) — copy a repo file into your sandbox workspace
+- mcp_guanine_checkout_files(paths) — batch checkout multiple files
+- mcp_guanine_write_file(path, content) — write to sandbox workspace (human reviews this)
+- mcp_guanine_read_file(path) — read from your sandbox workspace
+- mcp_guanine_signal_done(summary) — MUST call when finished
+
+### FORBIDDEN for editing (native tools — these bypass the sandbox!):
+- Edit tool — NEVER use this to modify project files
+- Write tool — NEVER use this to modify project files
+- Bash with sed/awk/echo/cat > — NEVER use these to modify project files
+
+If you use native Edit/Write on project files, your changes go directly to the repo
+WITHOUT human review. This defeats the entire purpose of the sandbox and the human
+will not be able to review or reject your changes. DO NOT DO THIS.
+
+### ALLOWED for reading (both work, native is fine):
+- Native Read tool — OK for reading any project file
+- mcp_guanine_get_repo_file_content(path) — also OK for reading
+- mcp_guanine_list_repo_files(pattern) — list files in the repo
+- mcp_guanine_get_file_tree() — see project structure
+
+## CODE INTELLIGENCE (jcodemunch MCP tools):
+You also have jcodemunch MCP tools for code analysis. Prefer these over grep/find:
+- mcp_jcodemunch_search_symbols — find where things are defined
+- mcp_jcodemunch_get_file_outline — see all symbols in a file
+- mcp_jcodemunch_get_symbol_source — read a specific function/class
+- mcp_jcodemunch_get_blast_radius — check what depends on something
+- mcp_jcodemunch_search_text — full-text search across the codebase
+
+## WORKFLOW
+1. Read CLAUDE.md from repo root for project conventions
+2. Use jcodemunch tools to explore and understand the code
+3. Checkout files you need to edit: mcp_guanine_checkout_file(path)
+4. Write your changes: mcp_guanine_write_file(path, content)
+5. Call mcp_guanine_signal_done(summary) when complete
+
+Your changes will appear in Guanine's review UI where the human can accept or reject each file.
 """
 
 
@@ -173,6 +210,7 @@ def repo_settings(repo_id):
         settings['opencode_password'] = request.form.get('opencode_password', '').strip()
         settings['opencode_auto_start'] = request.form.get('opencode_auto_start') == 'on'
         settings['default_agent'] = request.form.get('default_agent', 'build')
+        settings['sandbox_mode'] = request.form.get('sandbox_mode') == 'on'
         try:
             settings['max_parallel_sessions'] = int(request.form.get('max_parallel_sessions', '4'))
         except ValueError:
@@ -358,6 +396,11 @@ def _create_review_session(agent_session_id: str) -> str:
     ws = session['workspace_path']
     repo_path = repo['repo_path']
 
+    # For OpenCode iframe sessions, originals are saved in workspace/.originals/
+    # because OpenCode edits files directly in the repo.
+    is_opencode = session.get('backend') == 'opencode'
+    originals_dir = os.path.join(ws, '.originals') if is_opencode else None
+
     for f in modified_files:
         rel = f['relative_path']
         ws_file = os.path.join(ws, rel)
@@ -365,21 +408,27 @@ def _create_review_session(agent_session_id: str) -> str:
 
         versions = []
 
-        # Version 0: Original (from repo) — if file exists
-        if os.path.isfile(repo_file):
-            stat = os.stat(repo_file)
-            orig_hash = agent_tools._compute_hash(repo_file)
+        # Version 0: Original
+        # For OpenCode: use saved .originals/ (git HEAD snapshot)
+        # For sandbox: use the repo file (untouched by agent)
+        orig_source = (os.path.join(originals_dir, rel)
+                       if originals_dir and os.path.isfile(os.path.join(originals_dir, rel))
+                       else repo_file)
+
+        if os.path.isfile(orig_source):
+            stat = os.stat(orig_source)
+            orig_hash = agent_tools._compute_hash(orig_source)
             try:
-                with open(repo_file, 'r', encoding='utf-8', errors='replace') as fh:
+                with open(orig_source, 'r', encoding='utf-8', errors='replace') as fh:
                     orig_lines = sum(1 for _ in fh)
             except Exception:
                 orig_lines = None
-            is_binary = fm.FileScanner.detect_binary(repo_file)
+            is_binary = fm.FileScanner.detect_binary(orig_source)
 
             versions.append(fm.FileVersion(
                 source_name='Original',
-                source_root=repo_path,
-                absolute_path=repo_file,
+                source_root=os.path.dirname(orig_source),
+                absolute_path=orig_source,
                 relative_path=rel,
                 file_size=stat.st_size,
                 modified_time=stat.st_mtime,
@@ -489,6 +538,51 @@ def review_session(session_id):
     except ValueError as e:
         flash(str(e), 'error')
         return redirect(url_for('agent.session_detail', session_id=session_id))
+
+
+@agent_bp.route('/api/auto-review/<session_id>', methods=['POST'])
+def api_auto_review(session_id):
+    """Auto-create a review session for a completed agent session.
+
+    Called by the IDE poller when it detects a session changed to 'completed'.
+    Returns the merge_session_id so the IDE can load the changes tree.
+    """
+    session = agent_schema.get_session(session_id)
+    if session is None:
+        return jsonify({'error': 'Session not found'}), 404
+    if session['status'] not in ('completed', 'review'):
+        return jsonify({'error': f'Not ready (status: {session["status"]})'}), 400
+
+    merge_sid = session.get('merge_session_id')
+    if not merge_sid:
+        try:
+            merge_sid = _create_review_session(session_id)
+        except ValueError as e:
+            return jsonify({'error': str(e)}), 400
+
+    return jsonify({'merge_session_id': merge_sid, 'session_id': session_id})
+
+
+@agent_bp.route('/api/open-folder/<session_id>', methods=['POST'])
+def api_open_folder(session_id):
+    """Open the repo or workspace folder in the system file explorer."""
+    session = agent_schema.get_session(session_id)
+    if session is None:
+        return jsonify({'error': 'Session not found'}), 404
+
+    repo = agent_schema.get_repo(session['repo_id'])
+    folder = repo['repo_path'] if repo else session['workspace_path']
+
+    try:
+        if os.name == 'nt':
+            os.startfile(folder)
+        elif sys.platform == 'darwin':
+            subprocess.Popen(['open', folder])
+        else:
+            subprocess.Popen(['xdg-open', folder])
+        return jsonify({'opened': folder})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 
 # ---------------------------------------------------------------------------
@@ -775,14 +869,30 @@ def inline_diff_agent(session_id, filepath):
     if not repo:
         return jsonify({'error': 'Repo not found'}), 404
 
-    original_path = os.path.join(repo['repo_path'], filepath)
     workspace_path = os.path.join(session['workspace_path'], filepath)
 
     if not os.path.isfile(workspace_path):
         return jsonify({'error': 'File not found in workspace'}), 404
 
+    # For OpenCode sessions, original is in .originals/ (git HEAD snapshot).
+    # For new files, there is no original.
+    is_new_file = False
+    files = agent_schema.get_session_files(session_id)
+    for f in files:
+        if f['relative_path'] == filepath and f.get('status') == 'new':
+            is_new_file = True
+            break
+
+    originals_dir = os.path.join(session['workspace_path'], '.originals')
+    if is_new_file:
+        original_path = None
+    elif session.get('backend') == 'opencode' and os.path.isfile(os.path.join(originals_dir, filepath)):
+        original_path = os.path.join(originals_dir, filepath)
+    else:
+        original_path = os.path.join(repo['repo_path'], filepath)
+
     def _read_lines(path):
-        if not os.path.isfile(path):
+        if not path or not os.path.isfile(path):
             return []
         try:
             with open(path, encoding='utf-8', errors='replace') as f:
@@ -823,21 +933,22 @@ def inline_diff_agent(session_id, filepath):
             break
 
     # Check for stale file (repo changed since checkout)
+    # Skip for new files and when original is from .originals/ (immutable)
     is_stale = False
-    files = agent_schema.get_session_files(session_id)
-    for f in files:
-        if f['relative_path'] == filepath:
-            current_repo_hash = ''
-            if os.path.isfile(original_path):
-                import hashlib
-                h = hashlib.sha256()
-                with open(original_path, 'rb') as fh:
-                    for chunk in iter(lambda: fh.read(65536), b''):
-                        h.update(chunk)
-                current_repo_hash = h.hexdigest()
-            if current_repo_hash and f.get('checkout_hash') and current_repo_hash != f['checkout_hash']:
-                is_stale = True
-            break
+    if not is_new_file and original_path:
+        for f in files:
+            if f['relative_path'] == filepath:
+                current_repo_hash = ''
+                if os.path.isfile(original_path):
+                    import hashlib
+                    h = hashlib.sha256()
+                    with open(original_path, 'rb') as fh:
+                        for chunk in iter(lambda: fh.read(65536), b''):
+                            h.update(chunk)
+                    current_repo_hash = h.hexdigest()
+                if current_repo_hash and f.get('checkout_hash') and current_repo_hash != f['checkout_hash']:
+                    is_stale = True
+                break
 
     return jsonify({
         'filepath': filepath,
@@ -851,6 +962,36 @@ def inline_diff_agent(session_id, filepath):
         'done_summary': done_summary,
         'is_stale': is_stale,
     })
+
+
+@agent_bp.route('/api/save-agent-diff', methods=['POST'])
+def api_save_agent_diff():
+    """Save merged diff content back to the repo file for an agent session."""
+    data = request.get_json()
+    session_id = data.get('session_id', '')
+    filepath = data.get('filepath', '')
+    content = data.get('content', '')
+    if not session_id or not filepath:
+        return jsonify({'error': 'session_id and filepath required'}), 400
+    session = agent_schema.get_session(session_id)
+    if not session:
+        return jsonify({'error': 'Session not found'}), 404
+    repo = agent_schema.get_repo(session['repo_id'])
+    if not repo:
+        return jsonify({'error': 'Repo not found'}), 404
+    repo_path = repo['repo_path']
+    resolved = os.path.realpath(os.path.join(repo_path, filepath))
+    base = os.path.realpath(repo_path)
+    if not resolved.startswith(base + os.sep) and resolved != base:
+        return jsonify({'error': 'Path escapes repo directory'}), 403
+    try:
+        os.makedirs(os.path.dirname(resolved), exist_ok=True)
+        with open(resolved, 'w', encoding='utf-8', newline='') as f:
+            f.write(content)
+        lines = content.count('\n') + (1 if content and not content.endswith('\n') else 0)
+        return jsonify({'ok': True, 'lines': lines, 'size': os.path.getsize(resolved)})
+    except (OSError, PermissionError) as e:
+        return jsonify({'error': str(e)}), 500
 
 
 @agent_bp.route('/api/review-decision', methods=['POST'])
@@ -1215,7 +1356,17 @@ def api_session_detail(session_id):
     repo = agent_schema.get_repo(session['repo_id'])
     files = agent_schema.get_session_files(session_id)
     review_summary = agent_schema.get_review_summary(session_id)
-    return jsonify(session=session, repo=repo, files=files, review_summary=review_summary)
+
+    # Include OpenCode server URL if available (for iframe embed)
+    opencode_url = None
+    if session.get('backend') == 'opencode':
+        from agent_backends import get_repo_server
+        server_info = get_repo_server(session['repo_id'])
+        if server_info:
+            opencode_url = server_info['base_url']
+
+    return jsonify(session=session, repo=repo, files=files,
+                   review_summary=review_summary, opencode_url=opencode_url)
 
 
 @agent_bp.route('/api/conversation/<session_id>')
@@ -1269,69 +1420,85 @@ def api_chat_events(session_id):
 
     backend_name = session.get('backend', 'builtin')
 
+    def _normalize_event(event):
+        """Convert a raw backend event dict into (sse_event_name, json_data) tuples."""
+        raw_type = event.pop('type', 'message')
+
+        if raw_type == 'message.updated':
+            content = event.get('content', '')
+            if not content:
+                parts = event.get('parts', [])
+                for part in parts:
+                    if part.get('type') == 'text':
+                        content = part.get('content', '')
+                        break
+            yield 'message.content', json.dumps({"content": content})
+
+        elif raw_type == 'message.part.updated':
+            part = event.get('part', event)
+            part_type = part.get('type', '')
+            if part_type == 'tool-invocation':
+                inv = part.get('toolInvocation', part)
+                state = inv.get('state', '')
+                tool_name = inv.get('toolName', part.get('name', 'tool'))
+                tool_id = part.get('id', str(id(part)))
+                if state in ('call', 'partial-call'):
+                    args = inv.get('args', '')
+                    if isinstance(args, dict):
+                        args = json.dumps(args)
+                    yield 'tool.start', json.dumps({"id": tool_id, "name": tool_name, "arguments": args})
+                elif state == 'result':
+                    result_val = inv.get('result', '')
+                    yield 'tool.result', json.dumps({"id": tool_id, "result": result_val})
+            elif part_type == 'text':
+                content = part.get('content', part.get('text', ''))
+                yield 'message.content', json.dumps({"content": content})
+
+        elif raw_type == 'session.updated':
+            status = event.get('status', '')
+            if status in ('completed', 'complete'):
+                yield 'session.complete', json.dumps(event)
+                agent_schema.update_session_status(session_id, 'completed')
+            elif status == 'error':
+                yield 'session.error', json.dumps(event)
+                agent_schema.update_session_status(session_id, 'rejected')
+
+        elif raw_type == 'message.complete':
+            yield 'message.complete', json.dumps(event)
+
+        else:
+            yield raw_type, json.dumps(event)
+
     def generate():
+        yield ': keepalive\n\n'
         try:
-            from agent_backends import get_backend_for_repo
-            backend = get_backend_for_repo(session['repo_id'], backend_name)
             ref = session.get('backend_session_id') or session_id
 
-            for event in backend.subscribe_events(ref):
-                raw_type = event.pop('type', 'message')
+            if backend_name == 'opencode':
+                # Connect directly to the running OpenCode server — avoid
+                # creating a new backend instance which may not find it.
+                from agent_backends import get_repo_server
+                server_info = get_repo_server(session['repo_id'])
+                if not server_info:
+                    yield f'event: session.error\ndata: {json.dumps({"error": "OpenCode server not running for this repo"})}\n\n'
+                    return
+                from agentic.engine.opencode_client import OpenCodeClient
+                client = OpenCodeClient(server_info['base_url'])
+                event_iter = client.stream_events(ref)
+            else:
+                from agent_backends import get_backend_for_repo
+                backend = get_backend_for_repo(session['repo_id'], backend_name)
+                event_iter = backend.subscribe_events(ref)
 
-                # Normalize OpenCode event types to our format
-                if raw_type == 'message.updated':
-                    # Streaming text content
-                    content = event.get('content', '')
-                    if not content:
-                        # Try nested structure
-                        parts = event.get('parts', [])
-                        for part in parts:
-                            if part.get('type') == 'text':
-                                content = part.get('content', '')
-                                break
-                    yield f'event: message.content\ndata: {json.dumps({"content": content})}\n\n'
-
-                elif raw_type == 'message.part.updated':
-                    part = event.get('part', event)
-                    part_type = part.get('type', '')
-                    if part_type == 'tool-invocation':
-                        state = part.get('toolInvocation', part).get('state', '')
-                        tool_name = part.get('toolInvocation', part).get('toolName', part.get('name', 'tool'))
-                        tool_id = part.get('id', str(id(part)))
-                        if state == 'call' or state == 'partial-call':
-                            args = part.get('toolInvocation', part).get('args', '')
-                            if isinstance(args, dict):
-                                args = json.dumps(args)
-                            yield f'event: tool.start\ndata: {json.dumps({"id": tool_id, "name": tool_name, "arguments": args})}\n\n'
-                        elif state == 'result':
-                            result_val = part.get('toolInvocation', part).get('result', '')
-                            yield f'event: tool.result\ndata: {json.dumps({"id": tool_id, "result": result_val})}\n\n'
-                    elif part_type == 'text':
-                        content = part.get('content', part.get('text', ''))
-                        yield f'event: message.content\ndata: {json.dumps({"content": content})}\n\n'
-
-                elif raw_type == 'session.updated':
-                    status = event.get('status', '')
-                    if status in ('completed', 'complete'):
-                        yield f'event: session.complete\ndata: {json.dumps(event)}\n\n'
-                        # Update Guanine session status
-                        agent_schema.update_session_status(session_id, 'completed')
-                    elif status == 'error':
-                        yield f'event: session.error\ndata: {json.dumps(event)}\n\n'
-                        agent_schema.update_session_status(session_id, 'rejected')
-
-                elif raw_type == 'message.complete':
-                    yield f'event: message.complete\ndata: {json.dumps(event)}\n\n'
-
-                else:
-                    # Pass through unrecognized events
-                    yield f'event: {raw_type}\ndata: {json.dumps(event)}\n\n'
+            for event in event_iter:
+                for evt_name, evt_data in _normalize_event(event):
+                    yield f'event: {evt_name}\ndata: {evt_data}\n\n'
 
         except Exception as e:
             logger.exception('SSE stream error for session %s', session_id)
             yield f'event: session.error\ndata: {json.dumps({"error": str(e)})}\n\n'
 
-    return Response(generate(), mimetype='text/event-stream',
+    return Response(stream_with_context(generate()), mimetype='text/event-stream',
                     headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
 
 
@@ -1361,8 +1528,13 @@ def api_chat_send(session_id):
     # First message handling: sandbox prefix + session naming
     actual_message = message
     if not session.get('external_context'):
-        # Prepend sandbox instructions
-        actual_message = _SANDBOX_PREFIX + '\n\n' + message
+        # Check repo sandbox setting (default: on for OpenCode)
+        repo = agent_schema.get_repo(session['repo_id'])
+        repo_settings = (repo or {}).get('settings', {})
+        sandbox_enabled = repo_settings.get('sandbox_mode', True)
+
+        if sandbox_enabled:
+            actual_message = _SANDBOX_PREFIX + '\n\n' + message
 
         # Update task description to first 40 chars of user message
         task_label = message[:40]
@@ -1457,6 +1629,7 @@ def api_quick_session():
             'status': 'running',
             'model': model,
             'repo_id': repo_id,
+            'opencode_url': server_info['base_url'],
         })
 
     except Exception as e:
@@ -1566,6 +1739,20 @@ def api_opencode_status():
         'node_version': node_version,
         'npm_installed': npm is not None,
     })
+
+
+@agent_bp.route('/api/opencode-cleanup', methods=['POST'])
+def api_opencode_cleanup():
+    """Kill orphaned OpenCode processes and optionally stop all tracked servers."""
+    import agent_backends
+    mode = (request.get_json(silent=True) or {}).get('mode', 'orphans')
+    if mode == 'all':
+        agent_backends.stop_all_servers()
+        killed = agent_backends.cleanup_orphaned_processes()
+        return jsonify({'stopped': 'all', 'orphans_killed': killed})
+    else:
+        killed = agent_backends.cleanup_orphaned_processes()
+        return jsonify({'orphans_killed': killed})
 
 
 @agent_bp.route('/api/opencode-install', methods=['POST'])
@@ -1853,12 +2040,22 @@ def api_git_branches(repo_id):
 
 @agent_bp.route('/api/reconcile/<session_id>', methods=['POST'])
 def api_reconcile(session_id):
-    """Reconcile file changes for a session, bridging to review system."""
+    """Reconcile file changes for a session, bridging to review system.
+
+    For OpenCode iframe sessions: detects repo changes via git diff,
+    copies modified files to workspace, saves originals from git HEAD.
+    For sandbox sessions: walks workspace to detect changes vs checkout hashes.
+    """
     session = agent_schema.get_session(session_id)
     if session is None:
         return jsonify({'error': 'Session not found'}), 404
 
-    result = agent_tools.reconcile_session(session_id)
+    backend_name = session.get('backend', 'builtin')
+    if backend_name == 'opencode':
+        result = agent_tools.reconcile_opencode_session(session_id)
+    else:
+        result = agent_tools.reconcile_session(session_id)
+
     if 'error' in result:
         return jsonify(result), 400
     return jsonify(result)

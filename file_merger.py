@@ -6,6 +6,12 @@ Includes built-in Windsurf / VS Code / Cursor history extraction.
 Compares files across multiple source directories, identifies conflicts,
 and lets you review diffs before merging into a target directory.
 
+Architecture:
+    - FileScanner: Parallel directory walker with hash-based deduplication
+    - MergeEngine: Diff generator and file copier with skip-if-identical logic
+    - SQLite persistence: Per-session databases with WAL journaling
+    - Flask UI: Setup wizard, inventory browser, conflict resolver, merge editor
+
 Usage:
     pip install flask
     python file_merger.py
@@ -18,6 +24,7 @@ import sys
 import hashlib
 import json
 import difflib
+import logging
 import threading
 import fnmatch
 import shutil
@@ -30,6 +37,8 @@ from pathlib import Path
 from dataclasses import dataclass, field, asdict
 from typing import Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
+
+logger = logging.getLogger(__name__)
 
 from flask import (
     Flask, render_template, request, redirect, url_for,
@@ -58,12 +67,27 @@ class FileVersion:
     is_binary: bool
 
     def modified_dt(self):
+        """Return modification time as a datetime object."""
         return datetime.fromtimestamp(self.modified_time)
 
     def created_dt(self):
+        """Return creation time as a datetime object."""
         return datetime.fromtimestamp(self.created_time)
 
+    def age_human(self):
+        """Return human-readable age like '2 hours ago' or '3 days ago'."""
+        delta = datetime.now() - self.modified_dt()
+        seconds = int(delta.total_seconds())
+        if seconds < 60:
+            return f"{seconds}s ago"
+        if seconds < 3600:
+            return f"{seconds // 60}m ago"
+        if seconds < 86400:
+            return f"{seconds // 3600}h ago"
+        return f"{seconds // 86400}d ago"
+
     def size_human(self):
+        """Return file size in human-readable format (B, KB, MB)."""
         s = self.file_size
         if s > 1_048_576:
             return f"{s / 1_048_576:.1f} MB"
@@ -113,18 +137,34 @@ DEFAULT_IGNORE = {
     '.git', '__pycache__', 'node_modules', '.venv', 'venv',
     '.env', '.tox', '.mypy_cache', '.pytest_cache', 'dist',
     'build', '.eggs', '*.egg-info', 'Thumbs.db', '.DS_Store',
+    '.ruff_cache', '.coverage', 'htmlcov',
 }
 
 BINARY_EXTENSIONS = {
-    '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.ico', '.svg',
+    # Images
+    '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.ico', '.svg', '.webp',
+    # Fonts
     '.woff', '.woff2', '.ttf', '.eot', '.otf',
-    '.zip', '.rar', '.7z', '.gz', '.tar', '.bz2',
-    '.exe', '.dll', '.so', '.dylib',
-    '.pdf', '.doc', '.docx', '.xls', '.xlsx',
-    '.mp3', '.mp4', '.avi', '.mov', '.wav',
-    '.sqlite3', '.db', '.pkl', '.pickle',
-    '.pyc', '.pyo', '.class',
+    # Archives
+    '.zip', '.rar', '.7z', '.gz', '.tar', '.bz2', '.xz', '.zst',
+    # Executables / libraries
+    '.exe', '.dll', '.so', '.dylib', '.pyd',
+    # Documents
+    '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.pptx',
+    # Media
+    '.mp3', '.mp4', '.avi', '.mov', '.wav', '.flac', '.ogg', '.webm',
+    # Data
+    '.sqlite3', '.db', '.pkl', '.pickle', '.parquet', '.arrow',
+    # Compiled
+    '.pyc', '.pyo', '.class', '.o', '.obj', '.wasm',
 }
+
+# Size limits for various operations
+MAX_FILE_CONTENT_SIZE = 500_000      # 500 KB for file content preview
+MAX_LINE_COUNT_SIZE = 10_000_000     # 10 MB for line counting
+MAX_DIFF_LINES = 10_000              # Max lines for unified diff
+MAX_SBS_DIFF_LINES = 8_000           # Max lines for side-by-side diff
+MAX_SEARCH_RESULTS = 200             # Max search results
 
 
 class FileScanner:
@@ -150,13 +190,11 @@ class FileScanner:
 
     @staticmethod
     def compute_hash(filepath: str) -> str:
+        """Compute SHA-256 hash using 64KB chunked reads for memory efficiency."""
         h = hashlib.sha256()
         try:
             with open(filepath, 'rb') as f:
-                while True:
-                    chunk = f.read(65536)
-                    if not chunk:
-                        break
+                for chunk in iter(lambda: f.read(65536), b''):
                     h.update(chunk)
         except (OSError, PermissionError):
             return "ERROR"
@@ -164,6 +202,11 @@ class FileScanner:
 
     @staticmethod
     def detect_binary(filepath: str) -> bool:
+        """Detect if a file is binary by extension or null-byte heuristic.
+
+        Checks file extension first (fast path), then falls back to
+        reading the first 8KB and looking for null bytes.
+        """
         ext = Path(filepath).suffix.lower()
         if ext in BINARY_EXTENSIONS:
             return True
@@ -220,13 +263,18 @@ class FileScanner:
         return path
 
     def scan_file(self, source_name: str, source_root: str, abs_path: str, rel_path: str) -> Optional[FileVersion]:
+        """Scan a single file: compute hash, detect binary, count lines.
+
+        Returns a FileVersion dataclass or None if the file cannot be read.
+        Files larger than MAX_LINE_COUNT_SIZE skip line counting.
+        """
         try:
             safe = self._safe_path(abs_path)
             stat = os.stat(safe)
             is_binary = self.detect_binary(safe)
             sha = self.compute_hash(safe)
             line_count = None
-            if not is_binary and stat.st_size < 10_000_000:  # skip line count for >10MB
+            if not is_binary and stat.st_size < MAX_LINE_COUNT_SIZE:
                 enc = self.detect_encoding(safe)
                 line_count = self.count_lines(safe, enc)
             return FileVersion(
@@ -1099,7 +1147,7 @@ _restore_session()
 
 @app.route('/')
 def index():
-    return redirect(url_for('setup'))
+    return redirect(url_for('ide_view'))
 
 
 @app.route('/session/switch/<session_id>')
@@ -1673,7 +1721,18 @@ def file_browser():
     if not inv:
         flash('No scan results. Please run a scan first.', 'warning')
         return redirect(url_for('setup'))
-    return render_template('browse.html')
+    # Detect if this is an agent review session
+    sid = state.get('_session_id', '')
+    agent_session_id = sid.replace('review_', '', 1) if sid.startswith('review_') else None
+    return render_template('browse.html', agent_session_id=agent_session_id)
+
+
+@app.route('/ide')
+def ide_view():
+    """VS Code-style IDE shell — single-page app with tabs, activity bar, command palette."""
+    sid = state.get('_session_id', '')
+    agent_session_id = sid.replace('review_', '', 1) if sid.startswith('review_') else None
+    return render_template('ide_shell.html', agent_session_id=agent_session_id)
 
 
 @app.route('/api/file-detail/<path:filepath>')
@@ -1698,23 +1757,28 @@ def file_detail_api(filepath):
         vd['is_most_lines'] = multi and (v.line_count or 0) == max_lines and max_lines > 0
         versions.append(vd)
 
-    # Generate side-by-side diff if 2+ versions
+    # Generate diffs if 2+ versions
     side_by_side = []
+    hunks = []
     diff_a_idx = int(request.args.get('diff_a', 0))
     diff_b_idx = int(request.args.get('diff_b', min(1, len(item.versions) - 1)))
     if len(item.versions) >= 2:
         diff_a_idx = min(diff_a_idx, len(item.versions) - 1)
         diff_b_idx = min(diff_b_idx, len(item.versions) - 1)
         side_by_side = generate_side_by_side_diff(item.versions[diff_a_idx], item.versions[diff_b_idx])
+        hunks = _generate_merge_hunks(item.versions[diff_a_idx], item.versions[diff_b_idx])
 
     return render_template('_file_detail.html',
                            filepath=filepath,
                            item=item,
                            versions=versions,
                            side_by_side=side_by_side,
+                           hunks=hunks,
                            diff_a_idx=diff_a_idx,
                            diff_b_idx=diff_b_idx,
-                           num_versions=len(item.versions))
+                           num_versions=len(item.versions),
+                           source_a=item.versions[diff_a_idx].source_name if len(item.versions) >= 2 else '',
+                           source_b=item.versions[diff_b_idx].source_name if len(item.versions) >= 2 else '')
 
 
 def _count_files_in_tree(node: dict) -> int:
@@ -1737,12 +1801,94 @@ def _count_conflicts_in_tree(node: dict) -> int:
     return count
 
 
+def _browse_tree_from_agent_sessions():
+    """Build a browse tree from agent session modified files when no merge inventory exists."""
+    try:
+        import agent_schema
+        sessions = agent_schema.list_sessions()
+    except Exception:
+        return jsonify({'tree': {}, 'stats': {}})
+
+    # Gather modified files from active (non-merged) sessions
+    all_files = []
+    for s in sessions:
+        if s['status'] in ('merged', 'rejected'):
+            continue
+        files = agent_schema.get_session_files(s['session_id'])
+        for f in files:
+            if f.get('status') in ('modified', 'new'):
+                all_files.append({
+                    'relative_path': f['relative_path'],
+                    'status': f['status'],
+                    'lines_added': f.get('lines_added', 0),
+                    'lines_removed': f.get('lines_removed', 0),
+                    'session_id': s['session_id'],
+                })
+
+    if not all_files:
+        return jsonify({'tree': {}, 'stats': {}})
+
+    # Build tree in the same format as the merge tree
+    tree = {}
+    for f in all_files:
+        parts = f['relative_path'].replace('\\', '/').split('/')
+        node = tree
+        for part in parts[:-1]:
+            if part not in node:
+                node[part] = {'_type': 'dir', 'file_count': 0, 'conflict_count': 0, 'children': {}}
+            if node[part].get('_type') == 'dir':
+                node = node[part]['children']
+            else:
+                break
+        else:
+            cat = 'conflict' if f['status'] == 'modified' else 'unique'
+            node[parts[-1]] = {
+                '_type': 'file',
+                'relative_path': f['relative_path'],
+                'category': cat,
+                'resolved': False,
+                'num_versions': 2 if f['status'] == 'modified' else 1,
+                'versions': [],
+                'selected_index': 0,
+                'agent_session_id': f['session_id'],
+                'lines_added': f['lines_added'],
+                'lines_removed': f['lines_removed'],
+            }
+
+    # Compute directory counts
+    def _update_counts(node):
+        fc, cc = 0, 0
+        for name, val in node.items():
+            if isinstance(val, dict) and val.get('_type') == 'dir':
+                cfc, ccc = _update_counts(val['children'])
+                val['file_count'] = cfc
+                val['conflict_count'] = ccc
+                fc += cfc
+                cc += ccc
+            elif isinstance(val, dict) and val.get('_type') == 'file':
+                fc += 1
+                if val['category'] == 'conflict':
+                    cc += 1
+        return fc, cc
+
+    total_files, total_conflicts = _update_counts(tree)
+    stats = {
+        'total': total_files,
+        'auto_unique': total_files - total_conflicts,
+        'auto_identical': 0,
+        'conflicts': total_conflicts,
+        'resolved': 0,
+    }
+    return jsonify({'tree': tree, 'stats': stats})
+
+
 @app.route('/api/browse-tree')
 def browse_tree_api():
     """Return the entire inventory as a nested JSON tree for client-side rendering."""
     inv = state['inventory']
     if not inv:
-        return jsonify({'tree': {}, 'stats': {}})
+        # Fall back to agent session modified files
+        return _browse_tree_from_agent_sessions()
 
     def _build_tree_node(node):
         """Recursively build a JSON-serializable tree."""
@@ -1804,6 +1950,216 @@ def browse_tree_api():
 
     stats = _compute_stats(inv)
     return jsonify({'tree': _build_tree_node(tree), 'stats': stats})
+
+
+@app.route('/api/repo-tree')
+def repo_tree_api():
+    """Return the full file tree of the target (original repo) directory."""
+    target = state.get('target_dir', '')
+    if not target or not os.path.isdir(target):
+        return jsonify({'tree': {}, 'root': ''})
+
+    ignore = state.get('ignore_patterns', DEFAULT_IGNORE)
+    tree = {}
+    for root, dirs, files in os.walk(target):
+        dirs[:] = [d for d in dirs if d not in ignore]
+        for fname in files:
+            rel = os.path.relpath(os.path.join(root, fname), target).replace('\\', '/')
+            parts = rel.split('/')
+            node = tree
+            for part in parts[:-1]:
+                if part not in node:
+                    node[part] = {'_type': 'dir', 'children': {}}
+                node = node[part]['children']
+            try:
+                fpath = os.path.join(root, fname)
+                st = os.stat(fpath)
+                sz = st.st_size
+                lc = None
+                is_bin = FileScanner.detect_binary(fpath)
+                if not is_bin and sz < 2_000_000:
+                    try:
+                        with open(fpath, 'r', encoding='utf-8', errors='replace') as f:
+                            lc = sum(1 for _ in f)
+                    except Exception:
+                        pass
+                node[parts[-1]] = {
+                    '_type': 'file',
+                    'relative_path': rel,
+                    'size': f"{sz / 1048576:.1f} MB" if sz > 1048576 else f"{sz / 1024:.1f} KB" if sz > 1024 else f"{sz} B",
+                    'lines': lc,
+                    'is_binary': is_bin,
+                }
+            except OSError:
+                node[parts[-1]] = {'_type': 'file', 'relative_path': rel, 'size': '?', 'lines': None, 'is_binary': False}
+
+    return jsonify({'tree': tree, 'root': target})
+
+
+@app.route('/api/repo-file-content/<path:filepath>')
+def repo_file_content_api(filepath):
+    """Return raw content of a file from the target directory."""
+    target = state.get('target_dir', '')
+    if not target:
+        return jsonify({'error': 'No target directory configured'}), 400
+
+    resolved = os.path.realpath(os.path.join(target, filepath))
+    base = os.path.realpath(target)
+    if not resolved.startswith(base + os.sep) and resolved != base:
+        return jsonify({'error': 'Path escapes target directory'}), 403
+
+    if not os.path.isfile(resolved):
+        return jsonify({'error': 'File not found'}), 404
+
+    is_bin = FileScanner.detect_binary(resolved)
+    if is_bin:
+        return jsonify({'content': '', 'is_binary': True, 'lines': 0})
+
+    try:
+        enc = FileScanner.detect_encoding(resolved)
+        with open(resolved, encoding=enc, errors='replace') as f:
+            content = f.read()
+        ext = os.path.splitext(filepath)[1].lower()
+        lang_map = {
+            '.py': 'python', '.js': 'javascript', '.jsx': 'jsx', '.ts': 'typescript',
+            '.tsx': 'tsx', '.html': 'html', '.htm': 'html', '.css': 'css', '.scss': 'css',
+            '.json': 'json', '.md': 'markdown', '.sql': 'sql', '.sh': 'shell',
+            '.bash': 'shell', '.yaml': 'yaml', '.yml': 'yaml', '.xml': 'xml',
+            '.toml': 'toml', '.rs': 'rust', '.go': 'go', '.java': 'java',
+            '.c': 'c', '.cpp': 'cpp', '.h': 'cpp', '.rb': 'ruby', '.php': 'php',
+        }
+        content = content.replace('\r\n', '\n').replace('\r', '\n')
+        return jsonify({'content': content, 'is_binary': False, 'lines': content.count('\n') + 1, 'language': lang_map.get(ext, '')})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/save-repo-file', methods=['POST'])
+def save_repo_file():
+    """Save edited file content back to the target directory."""
+    data = request.get_json()
+    filepath = data.get('filepath', '')
+    content = data.get('content', '')
+
+    if not filepath:
+        return jsonify({'error': 'No filepath provided'}), 400
+
+    target = state.get('target_dir', '')
+    if not target:
+        return jsonify({'error': 'No target directory configured'}), 400
+
+    resolved = os.path.realpath(os.path.join(target, filepath))
+    base = os.path.realpath(target)
+    if not resolved.startswith(base + os.sep) and resolved != base:
+        return jsonify({'error': 'Path escapes target directory'}), 403
+
+    if not os.path.isfile(resolved):
+        return jsonify({'error': 'File not found'}), 404
+
+    try:
+        with open(resolved, 'w', encoding='utf-8', newline='') as f:
+            f.write(content)
+        lines = content.count('\n') + (1 if content and not content.endswith('\n') else 0)
+        return jsonify({'ok': True, 'lines': lines, 'size': os.path.getsize(resolved)})
+    except (OSError, PermissionError) as e:
+        return jsonify({'error': str(e)}), 500
+
+
+_LANG_MAP = {
+    '.py': 'python', '.js': 'javascript', '.jsx': 'jsx', '.ts': 'typescript',
+    '.tsx': 'tsx', '.html': 'html', '.htm': 'html', '.css': 'css', '.scss': 'css',
+    '.json': 'json', '.md': 'markdown', '.sql': 'sql', '.sh': 'shell',
+    '.bash': 'shell', '.yaml': 'yaml', '.yml': 'yaml', '.xml': 'xml',
+    '.toml': 'toml', '.rs': 'rust', '.go': 'go', '.java': 'java',
+    '.c': 'c', '.cpp': 'cpp', '.h': 'cpp', '.rb': 'ruby', '.php': 'php',
+}
+
+
+@app.route('/api/inline-diff/<path:filepath>')
+def inline_diff_api(filepath):
+    """Return hunk data for inline diff review of a conflict/merge item."""
+    inv = state['inventory']
+    item = inv.get(filepath)
+    if not item:
+        return jsonify({'error': 'File not found in inventory'}), 404
+
+    if len(item.versions) < 2:
+        return jsonify({'error': 'File has only one version — nothing to diff'}), 400
+
+    idx_a = int(request.args.get('a', 0))
+    idx_b = int(request.args.get('b', item.selected_index if item.selected_index is not None else min(1, len(item.versions) - 1)))
+
+    if idx_a >= len(item.versions) or idx_b >= len(item.versions):
+        return jsonify({'error': 'Version index out of range'}), 400
+
+    va, vb = item.versions[idx_a], item.versions[idx_b]
+    hunks = _generate_merge_hunks(va, vb)
+
+    ext = os.path.splitext(filepath)[1].lower()
+    conflict_count = sum(1 for h in hunks if h.get('type') == 'conflict')
+
+    return jsonify({
+        'filepath': filepath,
+        'source_a': va.source_name,
+        'source_b': vb.source_name,
+        'idx_a': idx_a,
+        'idx_b': idx_b,
+        'language': _LANG_MAP.get(ext, ''),
+        'hunks': hunks,
+        'conflict_count': conflict_count,
+        'resolved': item.resolved,
+    })
+
+
+@app.route('/api/search')
+def search_api():
+    """Search across source files by content. Returns matching lines grouped by file."""
+    import re as _re
+    query = request.args.get('q', '').strip()
+    if not query or len(query) < 2:
+        return jsonify({'results': [], 'count': 0})
+
+    target = state.get('target_dir', '')
+    if not target or not os.path.isdir(target):
+        return jsonify({'results': [], 'count': 0, 'error': 'No target directory'})
+
+    results = []
+    total = 0
+    max_results = 200
+    try:
+        pattern = _re.compile(_re.escape(query), _re.IGNORECASE)
+    except _re.error:
+        return jsonify({'results': [], 'count': 0, 'error': 'Invalid pattern'})
+
+    for root, dirs, files in os.walk(target):
+        # Skip ignored dirs
+        dirs[:] = [d for d in dirs if d not in DEFAULT_IGNORE]
+        for fname in files:
+            if total >= max_results:
+                break
+            ext = os.path.splitext(fname)[1].lower()
+            if ext in BINARY_EXTENSIONS:
+                continue
+            fpath = os.path.join(root, fname)
+            rel = os.path.relpath(fpath, target).replace('\\', '/')
+            try:
+                with open(fpath, encoding='utf-8', errors='replace') as f:
+                    lines = f.readlines()
+                matches = []
+                for i, line in enumerate(lines):
+                    if pattern.search(line):
+                        matches.append({'line': i + 1, 'text': line.rstrip()[:200]})
+                        total += 1
+                        if total >= max_results:
+                            break
+                if matches:
+                    results.append({'path': rel, 'matches': matches})
+            except (OSError, PermissionError):
+                continue
+        if total >= max_results:
+            break
+
+    return jsonify({'results': results, 'count': total, 'truncated': total >= max_results})
 
 
 @app.route('/resolve-accept-defaults', methods=['POST'])
@@ -1876,11 +2232,25 @@ def file_content(filepath):
     except (OSError, PermissionError) as e:
         return jsonify({'error': str(e)}), 500
 
+    # Map file extension to syntax highlighting language identifier
+    ext = os.path.splitext(filepath)[1].lower()
+    lang_map = {
+        '.py': 'python', '.js': 'javascript', '.jsx': 'jsx', '.ts': 'typescript',
+        '.tsx': 'tsx', '.html': 'html', '.htm': 'html', '.css': 'css', '.scss': 'css',
+        '.json': 'json', '.md': 'markdown', '.sql': 'sql', '.sh': 'shell',
+        '.bash': 'shell', '.yaml': 'yaml', '.yml': 'yaml', '.xml': 'xml',
+        '.toml': 'toml', '.rs': 'rust', '.go': 'go', '.java': 'java',
+        '.c': 'cpp', '.cpp': 'cpp', '.h': 'cpp', '.rb': 'ruby', '.php': 'php',
+    }
+
+    content = content.replace('\r\n', '\n').replace('\r', '\n')
     return jsonify({
         'content': content,
         'source': version.source_name,
         'is_binary': False,
         'encoding': enc,
+        'language': lang_map.get(ext, ''),
+        'lines': content.count('\n') + (1 if content and not content.endswith('\n') else 0),
     })
 
 
@@ -2163,8 +2533,51 @@ def coverage_files_api(source_name):
 # ---------------------------------------------------------------------------
 
 if __name__ == '__main__':
+    from logging.handlers import RotatingFileHandler
+
+    # --- Log directory ---
+    _log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'logs')
+    os.makedirs(_log_dir, exist_ok=True)
+
+    # --- Formatters ---
+    console_fmt = logging.Formatter(
+        '%(asctime)s %(levelname)-5s [%(name)s] %(message)s', datefmt='%H:%M:%S')
+    file_fmt = logging.Formatter(
+        '%(asctime)s %(levelname)-5s [%(name)s] %(funcName)s:%(lineno)d  %(message)s')
+
+    # --- Console handler (INFO) ---
+    console_h = logging.StreamHandler()
+    console_h.setLevel(logging.INFO)
+    console_h.setFormatter(console_fmt)
+
+    # --- File handler: everything (DEBUG) — rotates at 5 MB, keeps 3 backups ---
+    file_h = RotatingFileHandler(
+        os.path.join(_log_dir, 'guanine.log'),
+        maxBytes=5 * 1024 * 1024, backupCount=3, encoding='utf-8')
+    file_h.setLevel(logging.DEBUG)
+    file_h.setFormatter(file_fmt)
+
+    # --- File handler: errors only — separate file for quick triage ---
+    err_h = RotatingFileHandler(
+        os.path.join(_log_dir, 'errors.log'),
+        maxBytes=2 * 1024 * 1024, backupCount=2, encoding='utf-8')
+    err_h.setLevel(logging.WARNING)
+    err_h.setFormatter(file_fmt)
+
+    # --- Root logger ---
+    root = logging.getLogger()
+    root.setLevel(logging.DEBUG)
+    root.addHandler(console_h)
+    root.addHandler(file_h)
+    root.addHandler(err_h)
+
+    # Quiet noisy libraries
+    logging.getLogger('werkzeug').setLevel(logging.INFO)
+    logging.getLogger('urllib3').setLevel(logging.WARNING)
+
     print("=" * 60)
-    print("  File Recovery Merger Tool")
-    print("  Open http://localhost:5000 in your browser")
+    print("  Guanine (CodeEdit) — Multi-Agent Orchestration Platform")
+    print("  Open http://localhost:5000/ide in your browser")
+    print(f"  Logs: {_log_dir}")
     print("=" * 60)
     app.run(debug=True, port=5000, threaded=True)

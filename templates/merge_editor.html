@@ -3,36 +3,102 @@
 
 {% block extra_css %}
 <style>
-    .merge-hunk { border: 1px solid #333; border-radius: 6px; margin-bottom: 8px; overflow: hidden; }
-    .hunk-equal { border-color: #2a2d31; }
-    .hunk-conflict { border-color: #ffc107; }
-    .hunk-header { padding: 4px 10px; font-size: 0.75rem; display: flex; justify-content: space-between; align-items: center; }
-    .hunk-equal .hunk-header { background: #1e2225; color: #666; }
-    .hunk-conflict .hunk-header { background: #332b00; color: #ffc107; }
-    .hunk-body { display: flex; }
-    .hunk-side { flex: 1; overflow-x: auto; }
-    .hunk-side-a { border-right: 2px solid #333; }
-    .hunk-lines { font-family: 'Cascadia Code', 'Consolas', monospace; font-size: 0.78rem; white-space: pre-wrap; word-break: break-all; }
-    .hunk-lines .line { padding: 0 8px; min-height: 1.4em; }
-    .hunk-conflict .hunk-side-a .line { background: rgba(220,53,69,0.08); color: #df8f8f; }
-    .hunk-conflict .hunk-side-b .line { background: rgba(25,135,84,0.08); color: #8fdf8f; }
-    .hunk-equal .line { color: #777; }
-    .hunk-pick { cursor: pointer; transition: all 0.15s; }
-    .hunk-pick:hover { filter: brightness(1.3); }
-    .hunk-pick.picked { outline: 2px solid #0d6efd; outline-offset: -2px; }
-    .hunk-pick.picked .line { opacity: 1; }
-    .hunk-pick:not(.picked) .line { opacity: 0.5; }
-    .pick-btn { font-size: 0.7rem; padding: 1px 8px; }
-    .pick-btn.active { background: #0d6efd; border-color: #0d6efd; color: #fff; }
-    .merge-toolbar { position: sticky; top: 0; z-index: 10; background: #212529; padding: 8px 0; border-bottom: 1px solid #333; }
-    .equal-collapsed .hunk-body { display: none; }
-    .equal-collapsed .hunk-header { cursor: pointer; }
-    .equal-collapsed .hunk-header:hover { background: #252830; }
-    .line-num-gutter { display: inline-block; width: 40px; text-align: right; color: #555; user-select: none; padding-right: 6px; margin-right: 4px; border-right: 1px solid #333; }
-    /* Preview panel */
-    .preview-panel { max-height: 500px; overflow: auto; font-family: 'Cascadia Code', 'Consolas', monospace; font-size: 0.78rem; background: #1a1d21; border-radius: 6px; padding: 8px; }
-    .preview-panel .line-new { background: rgba(25,135,84,0.12); }
-    .preview-panel .line-old { background: rgba(220,53,69,0.12); }
+    .merge-toolbar {
+        position: sticky; top: 0; z-index: 10;
+        background: #1b1e22; padding: 10px 16px;
+        border-bottom: 1px solid #333;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+    }
+    .merge-sbs {
+        width: 100%; border-collapse: collapse;
+        font-family: 'Cascadia Code','Consolas','Monaco',monospace;
+        font-size: 0.8rem; table-layout: fixed;
+    }
+    .merge-sbs td {
+        padding: 0 8px; white-space: pre-wrap;
+        word-break: break-all; vertical-align: top; line-height: 1.45;
+    }
+    .merge-sbs .ln {
+        width: 44px; min-width: 44px; text-align: right;
+        color: #4a4e54; user-select: none; padding-right: 8px;
+        border-right: 1px solid #2a2d31; font-size: 0.72rem;
+    }
+    .merge-sbs .code { width: calc(50% - 44px); }
+    .merge-sbs .gutter {
+        width: 0; padding: 0; border-left: 1px solid #333;
+    }
+
+    /* Row types */
+    .row-eq .code { color: #707580; }
+    .row-eq:hover .code { color: #999; }
+    .row-del .code.left  { background: rgba(248,81,73,0.10); color: #f0a8a4; }
+    .row-del .code.right { color: #555; }
+    .row-ins .code.left  { color: #555; }
+    .row-ins .code.right { background: rgba(63,185,80,0.10); color: #a8dfab; }
+    .row-rep .code.left  { background: rgba(248,81,73,0.08); color: #f0a8a4; }
+    .row-rep .code.right { background: rgba(63,185,80,0.08); color: #a8dfab; }
+
+    /* Action bar */
+    .action-bar td {
+        background: #22262c; padding: 0 !important;
+        border-top: 1px solid #3a3f47; border-bottom: 1px solid #3a3f47;
+    }
+    .action-strip {
+        display: flex; align-items: center;
+        gap: 4px; padding: 1px 12px;
+    }
+    .action-strip .pbtn {
+        font-size: 0.7rem; font-weight: 500;
+        padding: 0 10px; border-radius: 3px; min-width: 0;
+        border: 1px solid transparent; cursor: pointer;
+        background: transparent; color: #8b9098;
+        transition: all 0.15s ease; text-align: center;
+        line-height: 20px;
+    }
+    .action-strip .pbtn:hover { background: #2d333b; color: #cdd3da; }
+    .action-strip .pbtn.p-left { color: #f0a8a4; }
+    .action-strip .pbtn.p-left:hover { background: rgba(248,81,73,0.15); border-color: rgba(248,81,73,0.3); }
+    .action-strip .pbtn.p-right { color: #a8dfab; }
+    .action-strip .pbtn.p-right:hover { background: rgba(63,185,80,0.15); border-color: rgba(63,185,80,0.3); }
+    .action-strip .pbtn.active {
+        background: #0d6efd; border-color: #0d6efd; color: #fff;
+    }
+    .action-strip .act-sep { width: 1px; height: 16px; background: #3a3f47; }
+    .action-strip .act-info {
+        font-size: 0.65rem; color: #5a5f66; margin-left: auto; white-space: nowrap;
+    }
+
+    /* Pick feedback */
+    .picked-left .code.right, .picked-none .code.left, .picked-none .code.right { opacity: 0.2; }
+    .picked-right .code.left { opacity: 0.2; }
+    .picked-left .code.left, .picked-right .code.right { box-shadow: inset 3px 0 0 rgba(13,110,253,0.6); }
+    .picked-both .code.left, .picked-both .code.right { box-shadow: inset 3px 0 0 rgba(13,110,253,0.3); }
+    .conflict-row .code { cursor: pointer; transition: opacity 0.15s ease, filter 0.15s ease; }
+    .conflict-row .code:hover { filter: brightness(1.15); }
+
+    /* Fold */
+    .fold-row td {
+        text-align: center; color: #58a6ff; font-size: 0.72rem;
+        padding: 3px 0 !important; background: #161b22; cursor: pointer;
+        border-top: 1px solid #21262d; border-bottom: 1px solid #21262d;
+    }
+    .fold-row:hover td { background: #1c2333; color: #79c0ff; }
+    .fold-hidden { display: none; }
+
+    /* Source headers */
+    .source-headers {
+        display: flex; font-size: 0.8rem; font-weight: 600;
+        border-bottom: 1px solid #333; background: #1b1e22;
+    }
+    .source-headers > div { width: 50%; padding: 5px 12px; }
+
+    /* Toolbar buttons */
+    .tbtn { font-size: 0.75rem; padding: 2px 10px; }
+    .sel-sm { width: auto; font-size: 0.75rem; background: #2d333b; border-color: #444; color: #ccc; }
+
+    /* Edit panel */
+    .edit-card { border-color: #333; }
+    .edit-card .card-header { background: #1b1e22; border-bottom: 1px solid #333; }
 </style>
 {% endblock %}
 
@@ -40,134 +106,154 @@
 <div class="merge-toolbar">
     <div class="d-flex justify-content-between align-items-center">
         <div>
-            <h5 class="mb-0 file-path">{{ filepath }}</h5>
-            <small class="text-muted">Merge Editor — pick left or right for each conflict block</small>
+            <h5 class="mb-0 file-path" style="font-size:0.95rem;">{{ filepath }}</h5>
+            <div class="d-flex gap-3 mt-1" style="font-size:0.78rem;">
+                <span class="text-muted">Changes: <strong class="text-light" id="cntChanges">0</strong></span>
+                <span class="text-muted">Picked: <strong class="text-light" id="cntPicked">0</strong></span>
+                <span id="cntStatus" class="text-warning"></span>
+            </div>
         </div>
-        <div class="d-flex gap-2 align-items-center">
-            <span class="text-muted" style="font-size:0.8rem;">
-                Compare:
-            </span>
-            <select id="selA" class="form-select form-select-sm" style="width:auto; font-size:0.8rem;" onchange="switchPair()">
+        <div class="d-flex gap-2 align-items-center flex-wrap">
+            <select id="selA" class="form-select form-select-sm sel-sm" onchange="switchPair()">
                 {% for v in versions %}
                 <option value="{{ v.index }}" {{ 'selected' if v.index == idx_a }}>{{ v.source_name }}</option>
                 {% endfor %}
             </select>
-            <span class="text-muted">vs</span>
-            <select id="selB" class="form-select form-select-sm" style="width:auto; font-size:0.8rem;" onchange="switchPair()">
+            <span class="text-muted" style="font-size:0.75rem;">vs</span>
+            <select id="selB" class="form-select form-select-sm sel-sm" onchange="switchPair()">
                 {% for v in versions %}
                 <option value="{{ v.index }}" {{ 'selected' if v.index == idx_b }}>{{ v.source_name }}</option>
                 {% endfor %}
             </select>
-            <button class="btn btn-sm btn-outline-secondary" onclick="toggleAllEqual()">Toggle Equal Blocks</button>
-            <button class="btn btn-sm btn-outline-info" onclick="pickAllLeft()">All Left</button>
-            <button class="btn btn-sm btn-outline-info" onclick="pickAllRight()">All Right</button>
-            <button class="btn btn-sm btn-outline-light" onclick="toggleEditMode()" id="editToggle">Edit Result</button>
-            <button class="btn btn-sm btn-primary" onclick="saveMerge()" id="saveBtn">Save Merge</button>
-            <a href="/conflict/{{ filepath }}" class="btn btn-sm btn-outline-secondary">Back</a>
+            <div class="vr mx-1" style="border-color:#444;"></div>
+            <button class="btn btn-sm btn-outline-secondary tbtn" onclick="pickAll('left')">All Left</button>
+            <button class="btn btn-sm btn-outline-success tbtn" onclick="pickAll('right')">All Right</button>
+            <button class="btn btn-sm btn-outline-light tbtn" onclick="toggleEditMode()" id="editToggle">Edit</button>
+            <button class="btn btn-sm btn-primary tbtn" onclick="saveMerge()" id="saveBtn">Save</button>
+            <a href="/conflict/{{ filepath }}" class="btn btn-sm btn-outline-secondary tbtn">Back</a>
         </div>
     </div>
-    <div class="d-flex gap-3 mt-1" style="font-size:0.8rem;">
-        <span>Conflicts: <strong id="conflictCount">0</strong></span>
-        <span>Picked: <strong id="pickedCount">0</strong></span>
-        <span id="remainingMsg" class="text-warning"></span>
-    </div>
 </div>
 
-<!-- Source headers -->
-<div class="d-flex border-bottom mb-2" style="font-size:0.85rem; font-weight:600;">
-    <div style="width:50%;" class="px-2 py-1 text-warning">{{ source_a }} (Left)</div>
-    <div style="width:50%;" class="px-2 py-1 text-info border-start">{{ source_b }} (Right)</div>
+<!-- Source labels -->
+<div class="source-headers" id="srcHeaders">
+    <div style="color:#f0a8a4;">{{ source_a }}</div>
+    <div style="color:#a8dfab; border-left:1px solid #333;">{{ source_b }}</div>
 </div>
 
-<!-- Hunks -->
-<div id="hunksContainer">
-{% for hunk in hunks %}
-{% if hunk.type == 'equal' %}
-<div class="merge-hunk hunk-equal equal-collapsed" data-hunk-id="{{ hunk.id }}" data-type="equal">
-    <div class="hunk-header" onclick="this.parentElement.classList.toggle('equal-collapsed')">
-        <span>Lines {{ hunk.start_a }}–{{ hunk.start_a + hunk.lines_a|length - 1 }} ({{ hunk.lines_a|length }} lines unchanged)</span>
-        <span style="font-size:0.65rem;">click to expand</span>
-    </div>
-    <div class="hunk-body">
-        <div class="hunk-side hunk-side-a">
-            <div class="hunk-lines">
-                {% for line in hunk.lines_a %}
-                <div class="line"><span class="line-num-gutter">{{ hunk.start_a + loop.index0 }}</span>{{ line | e }}</div>
+<!-- Diff table -->
+<div id="diffContainer">
+<table class="merge-sbs">
+    <colgroup>
+        <col style="width:44px"><col><col style="width:0"><col style="width:44px"><col>
+    </colgroup>
+    <tbody>
+    {% for hunk in hunks %}
+        {% if hunk.type == 'equal' %}
+            {% if hunk.lines_a | length > 20 %}
+                {% for i in range(3) %}
+                <tr class="row-eq">
+                    <td class="ln">{{ hunk.start_a + i }}</td>
+                    <td class="code left">{{ hunk.lines_a[i] | e }}</td>
+                    <td class="gutter"></td>
+                    <td class="ln">{{ hunk.start_b + i }}</td>
+                    <td class="code right">{{ hunk.lines_b[i] | e }}</td>
+                </tr>
                 {% endfor %}
-            </div>
-        </div>
-        <div class="hunk-side hunk-side-b">
-            <div class="hunk-lines">
-                {% for line in hunk.lines_b %}
-                <div class="line"><span class="line-num-gutter">{{ hunk.start_b + loop.index0 }}</span>{{ line | e }}</div>
+                <tr class="fold-row" onclick="toggleFold(this, {{ hunk.id }})">
+                    <td colspan="5">{{ hunk.lines_a | length - 6 }} unchanged lines</td>
+                </tr>
+                {% for i in range(3, hunk.lines_a | length - 3) %}
+                <tr class="row-eq fold-hidden" data-fold-id="{{ hunk.id }}">
+                    <td class="ln">{{ hunk.start_a + i }}</td>
+                    <td class="code left">{{ hunk.lines_a[i] | e }}</td>
+                    <td class="gutter"></td>
+                    <td class="ln">{{ hunk.start_b + i }}</td>
+                    <td class="code right">{{ hunk.lines_b[i] | e }}</td>
+                </tr>
                 {% endfor %}
-            </div>
-        </div>
-    </div>
-</div>
-
-{% elif hunk.type == 'conflict' %}
-<div class="merge-hunk hunk-conflict" data-hunk-id="{{ hunk.id }}" data-type="conflict" data-pick="">
-    <div class="hunk-header">
-        <span>
-            {% if hunk.tag == 'replace' %}Changed: {{ hunk.lines_a|length }} vs {{ hunk.lines_b|length }} lines
-            {% elif hunk.tag == 'delete' %}Deleted: {{ hunk.lines_a|length }} lines (left only)
-            {% elif hunk.tag == 'insert' %}Inserted: {{ hunk.lines_b|length }} lines (right only)
+                {% for i in range(hunk.lines_a | length - 3, hunk.lines_a | length) %}
+                <tr class="row-eq">
+                    <td class="ln">{{ hunk.start_a + i }}</td>
+                    <td class="code left">{{ hunk.lines_a[i] | e }}</td>
+                    <td class="gutter"></td>
+                    <td class="ln">{{ hunk.start_b + i }}</td>
+                    <td class="code right">{{ hunk.lines_b[i] | e }}</td>
+                </tr>
+                {% endfor %}
+            {% else %}
+                {% for i in range(hunk.lines_a | length) %}
+                <tr class="row-eq">
+                    <td class="ln">{{ hunk.start_a + i }}</td>
+                    <td class="code left">{{ hunk.lines_a[i] | e }}</td>
+                    <td class="gutter"></td>
+                    <td class="ln">{{ hunk.start_b + i }}</td>
+                    <td class="code right">{{ hunk.lines_b[i] | e }}</td>
+                </tr>
+                {% endfor %}
             {% endif %}
-        </span>
-        <div class="d-flex gap-1">
-            <button class="btn btn-sm pick-btn btn-outline-warning" onclick="pickHunk({{ hunk.id }}, 'left')">Use Left</button>
-            <button class="btn btn-sm pick-btn btn-outline-info" onclick="pickHunk({{ hunk.id }}, 'right')">Use Right</button>
-            <button class="btn btn-sm pick-btn btn-outline-secondary" onclick="pickHunk({{ hunk.id }}, 'both')">Both</button>
-            <button class="btn btn-sm pick-btn btn-outline-danger" onclick="pickHunk({{ hunk.id }}, 'none')">Neither</button>
-        </div>
-    </div>
-    <div class="hunk-body">
-        <div class="hunk-side hunk-side-a hunk-pick" onclick="pickHunk({{ hunk.id }}, 'left')">
-            <div class="hunk-lines">
-                {% for line in hunk.lines_a %}
-                <div class="line"><span class="line-num-gutter">{{ hunk.start_a + loop.index0 }}</span>{{ line | e }}</div>
-                {% endfor %}
-                {% if not hunk.lines_a %}
-                <div class="line text-muted" style="font-style:italic;">(empty)</div>
+
+        {% elif hunk.type == 'conflict' %}
+            <tr class="action-bar" data-hunk-id="{{ hunk.id }}">
+                <td colspan="5">
+                    <div class="action-strip">
+                        <button class="pbtn p-left" data-side="left" onclick="pickHunk({{ hunk.id }},'left')">&#8592; Left</button>
+                        <button class="pbtn p-right" data-side="right" onclick="pickHunk({{ hunk.id }},'right')">Right &#8594;</button>
+                        <span class="act-sep"></span>
+                        <button class="pbtn" data-side="both" onclick="pickHunk({{ hunk.id }},'both')">Both</button>
+                        <button class="pbtn" data-side="none" onclick="pickHunk({{ hunk.id }},'none')">Skip</button>
+                        <span class="act-info">
+                            {% if hunk.tag == 'replace' %}{{ hunk.lines_a | length }} &#8594; {{ hunk.lines_b | length }} lines
+                            {% elif hunk.tag == 'delete' %}-{{ hunk.lines_a | length }} lines
+                            {% elif hunk.tag == 'insert' %}+{{ hunk.lines_b | length }} lines
+                            {% endif %}
+                        </span>
+                    </div>
+                </td>
+            </tr>
+            {% set ns = namespace(max_len=hunk.lines_a | length) %}
+            {% if hunk.lines_b | length > ns.max_len %}{% set ns.max_len = hunk.lines_b | length %}{% endif %}
+            {% for i in range(ns.max_len) %}
+            <tr class="{% if hunk.tag == 'delete' %}row-del{% elif hunk.tag == 'insert' %}row-ins{% else %}row-rep{% endif %} conflict-row" data-hunk-id="{{ hunk.id }}">
+                {% if i < hunk.lines_a | length %}
+                <td class="ln">{{ hunk.start_a + i }}</td>
+                <td class="code left" onclick="pickHunk({{ hunk.id }},'left')">{{ hunk.lines_a[i] | e }}</td>
+                {% else %}
+                <td class="ln"></td>
+                <td class="code left" onclick="pickHunk({{ hunk.id }},'left')"></td>
                 {% endif %}
-            </div>
-        </div>
-        <div class="hunk-side hunk-side-b hunk-pick" onclick="pickHunk({{ hunk.id }}, 'right')">
-            <div class="hunk-lines">
-                {% for line in hunk.lines_b %}
-                <div class="line"><span class="line-num-gutter">{{ hunk.start_b + loop.index0 }}</span>{{ line | e }}</div>
-                {% endfor %}
-                {% if not hunk.lines_b %}
-                <div class="line text-muted" style="font-style:italic;">(empty)</div>
+                <td class="gutter"></td>
+                {% if i < hunk.lines_b | length %}
+                <td class="ln">{{ hunk.start_b + i }}</td>
+                <td class="code right" onclick="pickHunk({{ hunk.id }},'right')">{{ hunk.lines_b[i] | e }}</td>
+                {% else %}
+                <td class="ln"></td>
+                <td class="code right" onclick="pickHunk({{ hunk.id }},'right')"></td>
                 {% endif %}
-            </div>
-        </div>
-    </div>
-</div>
-{% endif %}
-{% endfor %}
+            </tr>
+            {% endfor %}
+        {% endif %}
+    {% endfor %}
+    </tbody>
+</table>
 </div>
 
-<!-- Edit Mode: full text editor for the merged result -->
+<!-- Edit mode panel -->
 <div id="editPanel" style="display:none;">
-    <div class="card">
+    <div class="card edit-card">
         <div class="card-header d-flex justify-content-between align-items-center">
-            <div>
-                <strong>Edit Merged Result</strong>
-                <small class="text-muted ms-2">Make any changes you need, then save</small>
-            </div>
-            <div class="d-flex gap-2 align-items-center" style="font-size:0.8rem;">
-                <span class="text-muted">Line <strong id="editorLine">1</strong>, Col <strong id="editorCol">1</strong></span>
-                <span class="text-muted ms-2"><strong id="editorLineCount">0</strong> lines</span>
+            <div><strong>Edit Merged Result</strong></div>
+            <div style="font-size:0.78rem;">
+                <span class="text-muted">Ln <strong id="edLn">1</strong> Col <strong id="edCol">1</strong></span>
+                <span class="text-muted ms-2"><strong id="edCnt">0</strong> lines</span>
             </div>
         </div>
         <div class="card-body p-0">
             <textarea id="mergeEditor" spellcheck="false"
-                      style="width:100%; min-height:600px; background:#1a1d21; color:#ccc; border:none; padding:12px;
-                             font-family:'Cascadia Code','Consolas',monospace; font-size:0.82rem; resize:vertical;
-                             tab-size:4; line-height:1.5; outline:none;"
-                      oninput="onEditorChange()" onclick="updateEditorPos()" onkeyup="updateEditorPos()"></textarea>
+                style="width:100%; min-height:600px; background:#0d1117; color:#c9d1d9; border:none; padding:12px;
+                       font-family:'Cascadia Code','Consolas',monospace; font-size:0.82rem; resize:vertical;
+                       tab-size:4; line-height:1.5; outline:none;"
+                oninput="edChanged()" onclick="edPos()" onkeyup="edPos()"></textarea>
         </div>
     </div>
 </div>
@@ -175,236 +261,172 @@
 
 {% block extra_js %}
 <script>
-// Store hunk data for building merged content
-const HUNKS = {{ hunks | tojson }};
-const FILEPATH = {{ filepath | tojson }};
-let picks = {};  // hunkId -> 'left' | 'right' | 'both' | 'none'
+var HUNKS = {{ hunks | tojson }};
+var FILEPATH = {{ filepath | tojson }};
+var picks = {};
+var editMode = false;
+var editorDirty = false;
+
+// ---- Picking ----
 
 function pickHunk(id, side) {
     picks[id] = side;
-    const el = document.querySelector(`[data-hunk-id="${id}"]`);
-    el.dataset.pick = side;
 
-    // Update button styles
-    el.querySelectorAll('.pick-btn').forEach(b => b.classList.remove('active'));
-    const labels = {'left': 'Use Left', 'right': 'Use Right', 'both': 'Both', 'none': 'Neither'};
-    el.querySelectorAll('.pick-btn').forEach(b => {
-        if (b.textContent.trim() === labels[side]) b.classList.add('active');
+    // Update action bar buttons
+    var bar = document.querySelector('.action-bar[data-hunk-id="' + id + '"]');
+    if (bar) {
+        bar.querySelectorAll('.pbtn').forEach(function(b) {
+            b.classList.toggle('active', b.getAttribute('data-side') === side);
+        });
+    }
+
+    // Update conflict rows
+    document.querySelectorAll('.conflict-row[data-hunk-id="' + id + '"]').forEach(function(row) {
+        row.classList.remove('picked-left', 'picked-right', 'picked-both', 'picked-none');
+        row.classList.add('picked-' + side);
     });
-
-    // Update pick visual on sides
-    const sideA = el.querySelector('.hunk-side-a');
-    const sideB = el.querySelector('.hunk-side-b');
-    sideA.classList.remove('picked');
-    sideB.classList.remove('picked');
-    if (side === 'left' || side === 'both') sideA.classList.add('picked');
-    if (side === 'right' || side === 'both') sideB.classList.add('picked');
 
     updateCounts();
 }
 
-function pickAllLeft() {
-    HUNKS.forEach(h => { if (h.type === 'conflict') pickHunk(h.id, 'left'); });
-}
-
-function pickAllRight() {
-    HUNKS.forEach(h => { if (h.type === 'conflict') pickHunk(h.id, 'right'); });
+function pickAll(side) {
+    HUNKS.forEach(function(h) { if (h.type === 'conflict') pickHunk(h.id, side); });
 }
 
 function updateCounts() {
-    const conflicts = HUNKS.filter(h => h.type === 'conflict');
-    const picked = conflicts.filter(h => picks[h.id]);
-    document.getElementById('conflictCount').textContent = conflicts.length;
-    document.getElementById('pickedCount').textContent = picked.length;
-    const remaining = conflicts.length - picked.length;
-    const msg = document.getElementById('remainingMsg');
-    if (remaining > 0) {
-        msg.textContent = `${remaining} conflict${remaining > 1 ? 's' : ''} remaining`;
-        msg.className = 'text-warning';
-    } else if (conflicts.length > 0) {
-        msg.textContent = 'All conflicts resolved!';
-        msg.className = 'text-success';
-    } else {
-        msg.textContent = 'No conflicts — files are identical';
-        msg.className = 'text-muted';
-    }
+    var conflicts = HUNKS.filter(function(h) { return h.type === 'conflict'; });
+    var picked = conflicts.filter(function(h) { return picks[h.id]; });
+    document.getElementById('cntChanges').textContent = conflicts.length;
+    document.getElementById('cntPicked').textContent = picked.length;
+    var rem = conflicts.length - picked.length;
+    var el = document.getElementById('cntStatus');
+    if (rem > 0) { el.textContent = rem + ' remaining'; el.className = 'text-warning'; }
+    else if (conflicts.length > 0) { el.textContent = 'All resolved'; el.className = 'text-success'; }
+    else { el.textContent = 'Identical'; el.className = 'text-muted'; }
 }
 
+// ---- Fold ----
+
+function toggleFold(foldRow, hunkId) {
+    var rows = document.querySelectorAll('[data-fold-id="' + hunkId + '"]');
+    var hidden = rows.length > 0 && rows[0].classList.contains('fold-hidden');
+    rows.forEach(function(r) { r.classList.toggle('fold-hidden'); });
+    foldRow.querySelector('td').textContent = hidden ? 'click to collapse' : rows.length + ' unchanged lines';
+}
+
+// ---- Build merged content ----
+
 function buildMergedContent() {
-    const lines = [];
-    for (const hunk of HUNKS) {
-        if (hunk.type === 'equal') {
-            lines.push(...hunk.lines_a);
-        } else if (hunk.type === 'conflict') {
-            const pick = picks[hunk.id];
-            if (!pick) {
-                return null;  // unpicked conflict
-            }
-            if (pick === 'left') lines.push(...hunk.lines_a);
-            else if (pick === 'right') lines.push(...hunk.lines_b);
-            else if (pick === 'both') { lines.push(...hunk.lines_a); lines.push(...hunk.lines_b); }
-            // 'none' = skip both
-        }
+    var lines = [];
+    for (var i = 0; i < HUNKS.length; i++) {
+        var h = HUNKS[i];
+        if (h.type === 'equal') { lines = lines.concat(h.lines_a); continue; }
+        var p = picks[h.id];
+        if (!p) return null;
+        if (p === 'left') lines = lines.concat(h.lines_a);
+        else if (p === 'right') lines = lines.concat(h.lines_b);
+        else if (p === 'both') { lines = lines.concat(h.lines_a); lines = lines.concat(h.lines_b); }
     }
     return lines.join('\n') + '\n';
 }
 
-// ======== EDIT MODE ========
-let editMode = false;
-let editorDirty = false;
+// ---- Edit mode ----
 
 function toggleEditMode() {
     editMode = !editMode;
-    const hunksEl = document.getElementById('hunksContainer');
-    const editEl = document.getElementById('editPanel');
-    const toggle = document.getElementById('editToggle');
+    var diffEl = document.getElementById('diffContainer');
+    var editEl = document.getElementById('editPanel');
+    var toggle = document.getElementById('editToggle');
+    var hdr = document.getElementById('srcHeaders');
 
     if (editMode) {
-        // Build merged content from picks and load into editor
-        const content = buildMergedContent();
+        var content = buildMergedContent();
         if (content === null) {
-            const conflicts = HUNKS.filter(h => h.type === 'conflict');
-            const unpicked = conflicts.filter(h => !picks[h.id]);
-            if (unpicked.length > 0) {
-                alert(`Pick left/right for all ${unpicked.length} conflict(s) first, then switch to edit mode.`);
-                editMode = false;
-                return;
-            }
+            var n = HUNKS.filter(function(h) { return h.type === 'conflict' && !picks[h.id]; }).length;
+            if (n > 0) { alert('Resolve all ' + n + ' change(s) first.'); editMode = false; return; }
         }
-        const editor = document.getElementById('mergeEditor');
-        editor.value = content;
-        editorDirty = false;
-        onEditorChange();
-        hunksEl.style.display = 'none';
-        editEl.style.display = 'block';
-        toggle.textContent = 'Hunk View';
-        toggle.classList.remove('btn-outline-light');
-        toggle.classList.add('btn-outline-warning');
-        editor.focus();
+        document.getElementById('mergeEditor').value = content;
+        editorDirty = false; edChanged();
+        diffEl.style.display = 'none'; hdr.style.display = 'none'; editEl.style.display = 'block';
+        toggle.textContent = 'Diff View'; toggle.className = 'btn btn-sm btn-outline-warning tbtn';
+        document.getElementById('mergeEditor').focus();
     } else {
-        hunksEl.style.display = '';
-        editEl.style.display = 'none';
-        toggle.textContent = 'Edit Result';
-        toggle.classList.remove('btn-outline-warning');
-        toggle.classList.add('btn-outline-light');
+        diffEl.style.display = ''; hdr.style.display = ''; editEl.style.display = 'none';
+        toggle.textContent = 'Edit'; toggle.className = 'btn btn-sm btn-outline-light tbtn';
     }
 }
 
-function onEditorChange() {
+function edChanged() {
     editorDirty = true;
-    const editor = document.getElementById('mergeEditor');
-    const lines = editor.value.split('\n');
-    document.getElementById('editorLineCount').textContent = lines.length;
-    updateEditorPos();
+    document.getElementById('edCnt').textContent = document.getElementById('mergeEditor').value.split('\n').length;
+    edPos();
 }
 
-function updateEditorPos() {
-    const editor = document.getElementById('mergeEditor');
-    const pos = editor.selectionStart;
-    const text = editor.value.substring(0, pos);
-    const line = text.split('\n').length;
-    const col = pos - text.lastIndexOf('\n');
-    document.getElementById('editorLine').textContent = line;
-    document.getElementById('editorCol').textContent = col;
+function edPos() {
+    var ed = document.getElementById('mergeEditor');
+    var pos = ed.selectionStart;
+    var txt = ed.value.substring(0, pos);
+    document.getElementById('edLn').textContent = txt.split('\n').length;
+    document.getElementById('edCol').textContent = pos - txt.lastIndexOf('\n');
 }
 
-// Handle Tab key in editor (insert tab instead of switching focus)
-document.addEventListener('keydown', function(e) {
-    if (e.target.id === 'mergeEditor' && e.key === 'Tab') {
-        e.preventDefault();
-        const editor = e.target;
-        const start = editor.selectionStart;
-        const end = editor.selectionEnd;
-        editor.value = editor.value.substring(0, start) + '    ' + editor.value.substring(end);
-        editor.selectionStart = editor.selectionEnd = start + 4;
-        onEditorChange();
-    }
-});
-
-// ======== SAVE ========
-function getContent() {
-    if (editMode) {
-        return document.getElementById('mergeEditor').value;
-    }
-    return buildMergedContent();
-}
+// ---- Save ----
 
 function saveMerge() {
-    let content;
+    var content;
     if (editMode) {
         content = document.getElementById('mergeEditor').value;
     } else {
-        const conflicts = HUNKS.filter(h => h.type === 'conflict');
-        const unpicked = conflicts.filter(h => !picks[h.id]);
+        var unpicked = HUNKS.filter(function(h) { return h.type === 'conflict' && !picks[h.id]; });
         if (unpicked.length > 0) {
-            alert(`${unpicked.length} conflict(s) not yet resolved. Pick left/right for each before saving.`);
-            const el = document.querySelector(`[data-hunk-id="${unpicked[0].id}"]`);
-            if (el) el.scrollIntoView({block: 'center', behavior: 'smooth'});
+            alert(unpicked.length + ' change(s) not resolved.');
+            var r = document.querySelector('.action-bar[data-hunk-id="' + unpicked[0].id + '"]');
+            if (r) r.scrollIntoView({ block: 'center', behavior: 'smooth' });
             return;
         }
         content = buildMergedContent();
         if (content === null) return;
     }
-
-    const btn = document.getElementById('saveBtn');
-    btn.disabled = true;
-    btn.textContent = 'Saving...';
-
+    var btn = document.getElementById('saveBtn');
+    btn.disabled = true; btn.textContent = 'Saving...';
     fetch('/api/save-merge', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({filepath: FILEPATH, content: content}),
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filepath: FILEPATH, content: content }),
     })
-    .then(r => r.json())
-    .then(data => {
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
         if (data.ok) {
-            editorDirty = false;
-            btn.textContent = 'Saved!';
-            btn.classList.remove('btn-primary');
-            btn.classList.add('btn-success');
-            setTimeout(() => {
-                window.location.href = '/conflict/' + encodeURI(FILEPATH);
-            }, 800);
-        } else {
-            alert('Error: ' + (data.error || 'Unknown'));
-            btn.disabled = false;
-            btn.textContent = 'Save Merge';
-        }
+            editorDirty = false; btn.textContent = 'Saved!';
+            btn.className = 'btn btn-sm btn-success tbtn';
+            setTimeout(function() { window.location.href = '/conflict/' + encodeURI(FILEPATH); }, 800);
+        } else { alert('Error: ' + (data.error || 'Unknown')); btn.disabled = false; btn.textContent = 'Save'; }
     })
-    .catch(err => {
-        alert('Error saving: ' + err);
-        btn.disabled = false;
-        btn.textContent = 'Save Merge';
-    });
+    .catch(function(err) { alert('Error: ' + err); btn.disabled = false; btn.textContent = 'Save'; });
 }
 
 function switchPair() {
-    const a = document.getElementById('selA').value;
-    const b = document.getElementById('selB').value;
-    window.location.href = '/merge/' + encodeURI(FILEPATH) + '?a=' + a + '&b=' + b;
+    window.location.href = '/merge/' + encodeURI(FILEPATH) + '?a=' + document.getElementById('selA').value + '&b=' + document.getElementById('selB').value;
 }
 
-function toggleAllEqual() {
-    document.querySelectorAll('.hunk-equal').forEach(el => {
-        el.classList.toggle('equal-collapsed');
-    });
-}
+// ---- Keyboard ----
 
-// Keyboard shortcuts
 document.addEventListener('keydown', function(e) {
-    if (e.ctrlKey && e.key === 's') { e.preventDefault(); saveMerge(); }
-    if (e.target.matches('select, input, textarea')) return;
-});
-
-// Warn before leaving with unsaved edits
-window.addEventListener('beforeunload', function(e) {
-    if (editMode && editorDirty) {
+    if (e.target.id === 'mergeEditor' && e.key === 'Tab') {
         e.preventDefault();
-        e.returnValue = '';
+        var ed = e.target, s = ed.selectionStart;
+        ed.value = ed.value.substring(0, s) + '    ' + ed.value.substring(ed.selectionEnd);
+        ed.selectionStart = ed.selectionEnd = s + 4; edChanged();
     }
+    if (e.ctrlKey && e.key === 's') { e.preventDefault(); saveMerge(); }
 });
 
-// Init counts
+window.addEventListener('beforeunload', function(e) {
+    if (editMode && editorDirty) { e.preventDefault(); e.returnValue = ''; }
+});
+
+// ---- Init ----
 updateCounts();
+var firstBar = document.querySelector('.action-bar');
+if (firstBar) setTimeout(function() { firstBar.scrollIntoView({ block: 'center' }); }, 150);
 </script>
 {% endblock %}

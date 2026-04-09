@@ -14,6 +14,10 @@
   <div class="chat-status-bar" id="chatStatusBar" style="display:none;">
     <span class="chat-status-dot" id="chatStatusDot"></span>
     <span class="chat-status-text" id="chatStatusText">Ready</span>
+    <div class="chat-view-toggle" id="chatViewToggle" style="display:none;">
+      <button class="chat-view-btn active" data-view="terminal" onclick="chatSwitchView('terminal')">Terminal</button>
+      <button class="chat-view-btn" data-view="messages" onclick="chatSwitchView('messages')">Messages</button>
+    </div>
     <div class="chat-status-actions">
       <button class="chat-status-btn" id="chatAbortBtn" onclick="chatAbort()" title="Abort" style="display:none;">
         <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M3 3l6 6M9 3l-6 6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
@@ -30,6 +34,13 @@
         <span style="font-size:0.7rem; color:#555;">OpenCode with GLM 5.1</span>
       </p>
     </div>
+  </div>
+
+  {# Iframe container — OpenCode web UI mirror #}
+  <div class="chat-iframe-container" id="chatIframeContainer" style="display:none;">
+    <iframe id="chatIframe" class="chat-iframe"
+            sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+            loading="lazy"></iframe>
   </div>
 
   {# Input area — Windsurf-style box with embedded send button #}

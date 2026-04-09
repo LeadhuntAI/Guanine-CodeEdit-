@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import random
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -40,9 +41,11 @@ class OpenRouterClient:
         self,
         api_key: str,
         base_url: str = "https://openrouter.ai/api/v1",
+        shutdown_event: threading.Event | None = None,
     ) -> None:
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
+        self.shutdown_event = shutdown_event
 
     # ------------------------------------------------------------------
     # Public API
@@ -100,6 +103,8 @@ class OpenRouterClient:
 
         last_exc: Exception | None = None
         for attempt in range(_MAX_RETRIES):
+            if self.shutdown_event and self.shutdown_event.is_set():
+                raise KeyboardInterrupt("Shutdown requested")
             try:
                 req = urllib.request.Request(
                     url, data=data, headers=headers, method="POST"
@@ -136,7 +141,10 @@ class OpenRouterClient:
                         else:
                             delay = _backoff_delay(attempt)
                         logger.info("Retrying in %.1fs...", delay)
-                        time.sleep(delay)
+                        if self.shutdown_event and self.shutdown_event.wait(delay):
+                            raise KeyboardInterrupt("Shutdown requested")
+                        elif not self.shutdown_event:
+                            time.sleep(delay)
                         continue
                 raise OpenRouterError(
                     f"HTTP {status}: {detail[:500]}", status_code=status
@@ -151,7 +159,11 @@ class OpenRouterClient:
                     exc,
                 )
                 if attempt < _MAX_RETRIES - 1:
-                    time.sleep(_backoff_delay(attempt))
+                    delay = _backoff_delay(attempt)
+                    if self.shutdown_event and self.shutdown_event.wait(delay):
+                        raise KeyboardInterrupt("Shutdown requested")
+                    elif not self.shutdown_event:
+                        time.sleep(delay)
                     continue
                 raise OpenRouterError(f"URL error: {exc}") from exc
 

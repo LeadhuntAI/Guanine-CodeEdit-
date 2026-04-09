@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <defs>
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="8" result="bigBlur"/>
+      <feFlood flood-color="#00aaff" flood-opacity="0.6" result="bigColor"/>
+      <feComposite in="bigColor" in2="bigBlur" operator="in" result="bigGlow"/>
+      <feGaussianBlur in="SourceAlpha" stdDeviation="3" result="tightBlur"/>
+      <feFlood flood-color="#40d0ff" flood-opacity="0.9" result="tightColor"/>
+      <feComposite in="tightColor" in2="tightBlur" operator="in" result="tightGlow"/>
+      <feMerge>
+        <feMergeNode in="bigGlow"/>
+        <feMergeNode in="tightGlow"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#101828"/>
+      <stop offset="100%" stop-color="#070b14"/>
+    </linearGradient>
+    <linearGradient id="letterFill" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#60d8ff"/>
+      <stop offset="100%" stop-color="#0090e0"/>
+    </linearGradient>
+  </defs>
+  <rect width="100" height="100" rx="18" fill="url(#bg)"/>
+  <rect x="2" y="2" width="96" height="96" rx="16" fill="none" stroke="#1a3060" stroke-width="1" opacity="0.6"/>
+  <text x="50" y="68" text-anchor="middle" font-size="64" font-weight="700" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" fill="url(#letterFill)" filter="url(#glow)">G</text>
+</svg>

@@ -5,7 +5,20 @@
       "Bash(python -c \"from markupsafe import Markup; print\\(''Use markupsafe instead''\\)\")",
       "Bash(python -c \":*)",
       "Bash(python:*)",
-      "Bash(python3 -c \"import os; print\\(''Script location:'', os.path.dirname\\(os.path.abspath\\(__file__\\)\\) if __name__ == ''__main__'' else ''N/A''\\); import file_merger; print\\(''SAVE_DIR:'', file_merger.SAVE_DIR\\); print\\(''CONFIG_FILE:'', file_merger.CONFIG_FILE\\); print\\(''STATE_FILE:'', file_merger.STATE_FILE\\); print\\(''Directory writable:'', os.access\\(file_merger.SAVE_DIR, os.W_OK\\)\\)\")"
+      "Bash(python3 -c \"import os; print\\(''Script location:'', os.path.dirname\\(os.path.abspath\\(__file__\\)\\) if __name__ == ''__main__'' else ''N/A''\\); import file_merger; print\\(''SAVE_DIR:'', file_merger.SAVE_DIR\\); print\\(''CONFIG_FILE:'', file_merger.CONFIG_FILE\\); print\\(''STATE_FILE:'', file_merger.STATE_FILE\\); print\\(''Directory writable:'', os.access\\(file_merger.SAVE_DIR, os.W_OK\\)\\)\")",
+      "mcp__jcodemunch__get_symbol_source",
+      "Bash(curl:*)",
+      "Skill(agent-browser)",
+      "Bash(tasklist)",
+      "Bash(agent-browser open:*)",
+      "Bash(agent-browser wait:*)",
+      "Bash(agent-browser set:*)",
+      "Bash(agent-browser screenshot:*)",
+      "Bash(agent-browser snapshot:*)",
+      "Bash(agent-browser close:*)",
+      "Bash(wmic process:*)",
+      "Bash(.venv/Scripts/python -c ':*)",
+      "Bash(ls:*)"
     ]
   }
 }

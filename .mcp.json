@@ -2,7 +2,25 @@
   "mcpServers": {
     "guanine": {
       "command": ".venv\\Scripts\\python.exe",
-      "args": ["agent_mcp_server.py"]
+      "args": [
+        "agent_mcp_server.py"
+      ]
+    },
+    "jcodemunch": {
+      "command": "C:\\ProgramData\\anaconda3\\python.exe",
+      "args": [
+        "-m",
+        "jcodemunch_mcp.server",
+        "--log-file",
+        "C:\\Projects\\360Marketing\\Guanine(CodeEdit)\\.claude\\jcodemunch.log",
+        "--log-level",
+        "INFO"
+      ],
+      "env": {
+        "PYTHONPATH": "C:\\Projects\\360Marketing\\Guanine(CodeEdit)\\spark\\vendors\\jcodemunch\\src",
+        "CODE_INDEX_PATH": "C:\\Projects\\360Marketing\\Guanine(CodeEdit)\\.code-index"
+      },
+      "instructions": "MANDATORY: Use these tools instead of Read, Grep, Glob, and Bash (grep, find, cat, head) for ALL code exploration, search, and navigation. These tools understand code structure (symbols, imports, dependencies, blast radius) \u2014 built-in tools only see raw text. Use get_file_outline before reading a file. Use search_symbols instead of Grep for finding definitions. Use get_symbol_source to read specific functions instead of Read on entire files. Use get_blast_radius before modifying shared functions."
     }
   }
 }

@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-**Guanine (CodeEdit)** — A sandboxed coding agent review system and multi-source file merge tool with a Flask web UI. AI coding agents edit file copies in isolated workspaces; humans review changes through side-by-side diffs and hunk-level merge editing. Also supports general-purpose multi-source directory scanning, conflict detection, and merging.
+**Guanine (CodeEdit)** — A multi-agent coding orchestration platform with sandboxed review, git-based remote project management, and multi-source file merging. Multiple AI agents (OpenCode, builtin OpenRouter) work in parallel on local or remote projects; humans review changes through side-by-side diffs and hunk-level merge editing. Supports git clone → branch → push → SSH deploy workflows for remote servers.
 
 Stack: Python, Flask, SQLite, Jinja2, Bootstrap 5, pytest
 
@@ -54,8 +54,11 @@ the documentation rule for this file?" If the user agrees, use the
 - **Session Persistence** (`file_merger.py` — SQLite layer) — Stores scan results, merge items, file versions, and coverage stats in per-session SQLite databases with WAL mode
 - **Flask Web UI** (`file_merger.py` — Flask routes + `templates/`) — Setup wizard, scan progress (SSE), inventory browser, conflict resolution, interactive merge editor, coverage dashboard
 - **Agent Review System** (`agent_schema.py`, `agent_tools.py`, `agent_workflow.py`, `agent_review.py`) — Sandboxed agent workspaces, tool exposure via Python/MCP, review bridge to merge UI
+- **Agent Backend Abstraction** (`agent_backends.py`) — Pluggable backend system with `BuiltinBackend` (OpenRouter) and `OpenCodeBackend` (HTTP API). Per-repo dynamic port allocation for parallel OpenCode servers. Backend factory `get_backend_for_repo()` configures backends from repo settings.
+- **OpenCode Client** (`agentic/engine/opencode_client.py`) — HTTP client for OpenCode server API using stdlib `urllib`. Handles health checks, auto-start as subprocess, session/message management, SSE event streaming.
+- **Git Operations** (`git_ops.py`) — Clone, pull, branch, commit, push, and SSH deploy. Supports remote project workflows: clone a git URL → agents work on feature branches → push → SSH deploy to server.
 - **MCP Server** (`agent_mcp_server.py`) — Model Context Protocol server for external agent integration
-- **HTML Templates** (`templates/`) — Jinja2 templates for merge UI and agent review pages
+- **HTML Templates** (`templates/`) — Jinja2 templates for merge UI, agent review, IDE shell with project switcher, Cascade-style chat panel, and agent dashboard
 
 ## Directory Layout
 
@@ -80,9 +83,14 @@ Guanine(CodeEdit)/
 ├── agent_tools.py                         <- Agent tool functions (single source of truth)
 ├── agent_workflow.py                      <- Workflow builder, tracked writes, tool registry
 ├── agent_review.py                        <- Flask Blueprint for agent UI + review bridge
+├── agent_backends.py                      <- Pluggable backend abstraction + port manager
 ├── agent_mcp_server.py                    <- MCP server wrapping agent tools
+├── git_ops.py                             <- Git clone/branch/push/deploy operations
 ├── templates/                             <- Jinja2 HTML templates
 │   ├── base.html                          <- Base layout (Bootstrap 5 dark theme)
+│   ├── ide_shell.html                     <- Full IDE shell (project switcher, chat, dashboard)
+│   ├── _chat_panel.html                   <- Cascade-style agent chat panel partial
+│   ├── _dashboard.html                    <- Agent dashboard sidebar partial
 │   ├── setup.html                         <- Source/target configuration + session management
 │   ├── browse.html                        <- Split-pane file browser
 │   ├── inventory.html                     <- Full file inventory with filtering/sorting
@@ -94,15 +102,15 @@ Guanine(CodeEdit)/
 │   ├── merge_progress.html                <- Merge progress (SSE)
 │   ├── log.html                           <- Activity log
 │   ├── _file_detail.html                  <- File detail partial (AJAX loaded)
-│   ├── agent_repos.html                   <- Repo registration
+│   ├── agent_repos.html                   <- Repo registration + model/deploy settings
 │   ├── agent_sessions.html                <- Agent session dashboard
 │   ├── agent_session_detail.html          <- Session detail + actions
 │   ├── agent_conversation.html            <- Agent conversation viewer
 │   └── agent_combined_diff.html           <- Multi-agent combined diff
 ├── agentic/                               <- Lightweight AI workflow engine
-│   ├── engine/                            <- Runner, loop, OpenRouter client, knowledge
+│   ├── engine/                            <- Runner, loop, OpenRouter client, OpenCode client
 │   └── tools/                             <- Sandboxed filesystem tools
-└── sessions/                              <- Runtime data (SQLite DBs per session + agent workspaces)
+└── sessions/                              <- Runtime data (SQLite DBs, agent workspaces, cloned repos)
 ```
 
 ## Key Conventions
@@ -136,12 +144,24 @@ Read `.claude/rules/invariants.md` for the full list with file references.
 ### Agent Review Flow (touches: `agent_schema.py` → `agent_tools.py` → `agent_review.py` → merge UI)
 
 ```
-1. User registers a repo and creates an agent session (workspace is provisioned)
-2. Agent checks out files, edits in workspace via tools (Python import or MCP)
-3. Agent signals done — diff stats are computed for all modified files
-4. User clicks "Review Changes" — review bridge creates MergeItem/FileVersion pairs
-5. User reviews via existing merge UI (hunk-level accept/reject/edit)
-6. Accepted changes are copied back to the original repo
+1. User registers a repo (local path or git URL) and creates an agent session
+2. Backend (OpenCode or builtin) is selected; OpenCode gets its own server per repo on a dynamic port
+3. Agent checks out files, edits in workspace via tools (Python import or MCP)
+4. Agent signals done — diff stats are computed for all modified files
+5. User clicks "Review Changes" — review bridge creates MergeItem/FileVersion pairs
+6. User reviews via existing merge UI (hunk-level accept/reject/edit)
+7. Accepted changes are copied back to the original repo
+8. For git repos: push to feature branch → optional SSH deploy to remote server
+```
+
+### Git Remote Project Flow (touches: `git_ops.py` → `agent_review.py` → SSH)
+
+```
+1. User adds a project via git URL → cloned to sessions/repos/<id>/
+2. Agent sessions work on the local clone in sandboxed workspaces
+3. After review + merge, changes land in the local clone
+4. User clicks "Push" → creates branch guanine/<task>-<id>, commits, pushes to remote
+5. User clicks "Deploy" → SSH into server, runs configured deploy command (e.g. git pull && restart)
 ```
 
 ## Testing Protocol
@@ -232,4 +252,40 @@ The sandbox is controlled by the `.claude/sandbox-active` flag file:
 - Shell syntax: PowerShell / bash (Git Bash)
 - Package manager: pip
 - Python dependencies: `flask` (+ `markupsafe`), `mcp` (optional, for MCP server), stdlib otherwise
+- Optional: `opencode-ai` (npm package for OpenCode backend), `git` (for remote project support)
 - Run with: `python file_merger.py` → http://localhost:5000
+
+<!-- jcodemunch-code-index -->
+## Code Index (jcodemunch)
+
+This project has a jcodemunch code index at `.code-index/`. An MCP server is configured in `.claude/settings.json` that exposes 45 code analysis tools.
+
+**MANDATORY: NEVER use the Read tool, Grep tool, Glob tool, or Bash commands (grep, find, cat, head) to explore, search, or navigate code when jcodemunch MCP tools are available. The jcodemunch tools understand code structure (symbols, imports, dependencies, blast radius) — built-in tools only see raw text. Use Read/Grep only for non-code files (config, docs, logs) or when editing.**
+
+### Key MCP tools to use
+
+| Tool | When to use |
+|------|-------------|
+| `mcp__jcodemunch__search_symbols` | Finding where something is defined (instead of grep) |
+| `mcp__jcodemunch__get_file_outline` | See all symbols in a file before reading it |
+| `mcp__jcodemunch__get_symbol_source` | Read just one function/class (instead of reading the whole file) |
+| `mcp__jcodemunch__get_blast_radius` | Before modifying a function — see what depends on it |
+| `mcp__jcodemunch__get_dependency_graph` | Understand module-level import relationships |
+| `mcp__jcodemunch__get_class_hierarchy` | Explore inheritance chains |
+| `mcp__jcodemunch__search_text` | Full-text search across indexed files |
+| `mcp__jcodemunch__get_file_tree` | Repository file structure |
+
+### Workflow
+
+1. **Before reading a file**: use `mcp__jcodemunch__get_file_outline` to see what's in it, then `mcp__jcodemunch__get_symbol_source` for specific symbols
+2. **Finding definitions**: use `mcp__jcodemunch__search_symbols` instead of grep
+3. **Understanding impact**: use `mcp__jcodemunch__get_blast_radius` before modifying shared functions
+4. **Exploring structure**: use `mcp__jcodemunch__get_dependency_graph` and `mcp__jcodemunch__get_class_hierarchy`
+
+### Symbol ID format
+
+Symbol IDs follow `file_path::qualified_name#kind`, e.g.:
+- `src/auth.py::login#function`
+- `src/models.py::User#class`
+- `src/models.py::User.save#method`
+<!-- /jcodemunch-code-index -->

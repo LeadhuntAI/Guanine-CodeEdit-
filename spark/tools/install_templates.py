@@ -5,6 +5,48 @@ import os
 import shutil
 
 
+# ---------------------------------------------------------------------------
+# Template manifest — tracks which template files have pre-written docs
+# ---------------------------------------------------------------------------
+
+# Template source files with corresponding pre-written documentation.
+# Key: doc file path (relative to target repo), Value: source files the doc covers.
+TEMPLATE_DOC_MAP: dict[str, list[str]] = {
+    "agentic/rules/docs/agentic-overview.md": [
+        "agentic/README.md",
+        "agentic/engine/__init__.py",
+    ],
+    "agentic/rules/docs/json-definitions.md": [
+        "agentic/tools/definitions.json",
+        "agentic/workflows/example_workflow.json",
+    ],
+    "agentic/rules/docs/knowledge-system.md": [
+        "agentic/engine/knowledge.py",
+    ],
+    "agentic/rules/docs/skills.md": [
+        "agentic/skills/example-skill/SKILL.md",
+    ],
+    "agentic/rules/docs/workflows.md": [
+        "agentic/engine/loop.py",
+        "agentic/engine/runner.py",
+        "agentic/engine/tool_executor.py",
+        "agentic/engine/openrouter.py",
+    ],
+}
+
+# Files that ARE documentation — they don't need separate docs generated.
+# Paths use .claude/ prefix; for other platforms the seeding function adjusts.
+SELF_DOCUMENTING_TEMPLATES: list[str] = [
+    ".claude/RULES_INDEX.md",
+    ".claude/rules/invariants.md",
+    ".claude/rules/testing.md",
+    ".claude/rules/bug-fixing.md",
+    ".claude/skills/code-documenter/SKILL.md",
+    ".claude/skills/code-search/SKILL.md",
+    ".claude/spark_plans/spark_init_example.json",
+]
+
+
 # Platform directory and instructions-file mappings.
 PLATFORM_MAP = {
     "claude":    {"dir": ".claude",    "instructions": "CLAUDE.md"},

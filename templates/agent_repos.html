@@ -71,6 +71,153 @@
                         <label class="form-label">Ignore Patterns (one per line)</label>
                         <textarea name="ignore_patterns" class="form-control font-monospace" rows="3" placeholder=".git&#10;node_modules&#10;__pycache__">{{ editing.ignore_patterns | join('\n') }}</textarea>
                     </div>
+
+                    <hr>
+                    <h6 class="text-muted mb-3">Agent Backend Configuration</h6>
+
+                    {% set settings = editing.get('settings', {}) if editing.get is defined else {} %}
+
+                    <div class="mb-3">
+                        <label class="form-label">OpenRouter API Key</label>
+                        <input type="password" name="openrouter_api_key" class="form-control font-monospace"
+                               value="{{ settings.get('openrouter_api_key', '') }}"
+                               placeholder="sk-or-v1-...">
+                        <div class="form-text">Used by both the builtin engine and OpenCode. Get one at <a href="https://openrouter.ai/keys" target="_blank" rel="noopener" style="color:#58a6ff;">openrouter.ai/keys</a></div>
+                    </div>
+                    {% set models = settings.get('models', []) or default_models %}
+                    {% set cur_default = settings.get('default_model', '') or default_model_id %}
+
+                    <div class="mb-3">
+                        <label class="form-label">Default Model</label>
+                        <select name="default_model" class="form-select" id="defaultModelSelect">
+                            {% for m in models %}
+                            <option value="{{ m.id }}" {{ 'selected' if m.id == cur_default }}>
+                                {{ m.label or m.id }}{% if m.providers %} ({{ m.providers }}){% endif %}
+                            </option>
+                            {% endfor %}
+                        </select>
+                        <div class="form-text">Select from your configured models below.</div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">Available Models</label>
+                        <div class="form-text mb-2">Add OpenRouter model IDs with optional display name and preferred providers.</div>
+                        <div id="modelList">
+                            {% for m in models %}
+                            <div class="model-row d-flex gap-2 mb-2 align-items-center">
+                                <input type="text" name="model_id[]" class="form-control form-control-sm font-monospace" value="{{ m.id }}" placeholder="provider/model-name" style="flex:2;">
+                                <input type="text" name="model_label[]" class="form-control form-control-sm" value="{{ m.label or '' }}" placeholder="Display name" style="flex:1.5;">
+                                <input type="text" name="model_providers[]" class="form-control form-control-sm" value="{{ m.providers or '' }}" placeholder="Providers" style="flex:1.5;">
+                                <button type="button" class="btn btn-sm btn-outline-danger" onclick="this.parentElement.remove();">&times;</button>
+                            </div>
+                            {% endfor %}
+                        </div>
+                        <button type="button" class="btn btn-sm btn-outline-secondary mt-1" onclick="addModelRow()">+ Add Model</button>
+                    </div>
+
+                    <script>
+                    function addModelRow() {
+                        const list = document.getElementById('modelList');
+                        const row = document.createElement('div');
+                        row.className = 'model-row d-flex gap-2 mb-2 align-items-center';
+                        row.innerHTML = '<input type="text" name="model_id[]" class="form-control form-control-sm font-monospace" placeholder="provider/model-name" style="flex:2;">' +
+                            '<input type="text" name="model_label[]" class="form-control form-control-sm" placeholder="Display name" style="flex:1.5;">' +
+                            '<input type="text" name="model_providers[]" class="form-control form-control-sm" placeholder="OpenAI, Azure" style="flex:1.5;">' +
+                            '<button type="button" class="btn btn-sm btn-outline-danger" onclick="this.parentElement.remove();">&times;</button>';
+                        list.appendChild(row);
+                    }
+                    </script>
+
+                    <div class="mb-3">
+                        <label class="form-label">Default Backend</label>
+                        <select name="default_backend" class="form-select">
+                            <option value="builtin" {{ 'selected' if settings.get('default_backend', 'builtin') == 'builtin' }}>Builtin (OpenRouter)</option>
+                            <option value="opencode" {{ 'selected' if settings.get('default_backend') == 'opencode' }}>OpenCode</option>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Default Agent Type</label>
+                        <select name="default_agent" class="form-select">
+                            <option value="build" {{ 'selected' if settings.get('default_agent', 'build') == 'build' }}>Build (full access)</option>
+                            <option value="plan" {{ 'selected' if settings.get('default_agent') == 'plan' }}>Plan (read-only analysis)</option>
+                            <option value="explore" {{ 'selected' if settings.get('default_agent') == 'explore' }}>Explore (codebase navigation)</option>
+                        </select>
+                    </div>
+                    <div class="mb-3 form-check">
+                        <input type="checkbox" name="sandbox_mode" class="form-check-input" id="sandboxMode"
+                               {{ 'checked' if settings.get('sandbox_mode', true) }}>
+                        <label class="form-check-label" for="sandboxMode">Sandbox Mode (OpenCode)</label>
+                        <div class="form-text">When enabled, OpenCode agents must use Guanine's MCP tools for file editing. Changes go through human review before reaching the repo. Does not affect Claude Code (which uses its own .claude/sandbox-active flag).</div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">OpenCode Server URL</label>
+                        <input type="text" name="opencode_url" class="form-control font-monospace"
+                               value="{{ settings.get('opencode_url', 'http://127.0.0.1:4096') }}"
+                               placeholder="http://127.0.0.1:4096">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">OpenCode Password (optional)</label>
+                        <input type="password" name="opencode_password" class="form-control"
+                               value="{{ settings.get('opencode_password', '') }}"
+                               placeholder="Leave blank if not set">
+                    </div>
+                    <div class="mb-3 form-check">
+                        <input type="checkbox" name="opencode_auto_start" class="form-check-input" id="autoStart"
+                               {{ 'checked' if settings.get('opencode_auto_start', false) }}>
+                        <label class="form-check-label" for="autoStart">Auto-start OpenCode server when needed</label>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Max Parallel Sessions</label>
+                        <input type="number" name="max_parallel_sessions" class="form-control" min="1" max="16"
+                               value="{{ settings.get('max_parallel_sessions', 4) }}">
+                        <div class="form-text">Maximum number of sub-agent sessions running simultaneously.</div>
+                    </div>
+
+                    <hr>
+                    <h6 class="text-muted mb-3">Git &amp; Deploy</h6>
+
+                    {% if settings.get('connection_type') == 'git' %}
+                    <div class="mb-3">
+                        <label class="form-label">Git URL</label>
+                        <input type="text" class="form-control font-monospace" value="{{ settings.get('git_url', '') }}" disabled>
+                        <div class="form-text">Cloned repository. Pull to update.</div>
+                    </div>
+                    {% endif %}
+
+                    <div class="mb-3">
+                        <label class="form-label">Default Branch</label>
+                        <input type="text" name="git_branch" class="form-control" value="{{ settings.get('git_branch', 'main') }}" placeholder="main">
+                        <div class="form-text">Branch that agents branch from. Changes are pushed to feature branches.</div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">Deploy Host</label>
+                        <input type="text" name="deploy_host" class="form-control font-monospace"
+                               value="{{ settings.get('deploy_host', '') }}" placeholder="myserver.com or 192.168.1.100">
+                        <div class="form-text">SSH hostname for remote deployment. Leave blank to skip deploy.</div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Deploy User (optional)</label>
+                        <input type="text" name="deploy_user" class="form-control"
+                               value="{{ settings.get('deploy_user', '') }}" placeholder="ubuntu">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Deploy Port (optional)</label>
+                        <input type="number" name="deploy_port" class="form-control" min="1" max="65535"
+                               value="{{ settings.get('deploy_port', '') }}" placeholder="22">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">SSH Key Path (optional)</label>
+                        <input type="text" name="deploy_key" class="form-control font-monospace"
+                               value="{{ settings.get('deploy_key', '') }}" placeholder="~/.ssh/id_rsa">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Deploy Command</label>
+                        <input type="text" name="deploy_command" class="form-control font-monospace"
+                               value="{{ settings.get('deploy_command', '') }}" placeholder="cd /app && git pull && systemctl restart myapp">
+                        <div class="form-text">Runs on the remote host via SSH after pushing changes.</div>
+                    </div>
+
                     <button type="submit" class="btn btn-primary">Save Settings</button>
                     <a href="{{ url_for('agent.repos') }}" class="btn btn-secondary">Cancel</a>
                 </form>

@@ -53,6 +53,8 @@ SKIP_DIRS: set[str] = {
     "proto",
     # Spark itself (engine, vendors, templates — not user code)
     "spark",
+    # Code index cache (jCodeMunch)
+    ".code-index",
 }
 
 
@@ -72,6 +74,10 @@ SKIP_EXTENSIONS: set[str] = {
     ".whl",
     ".egg",
     ".lock",
+    # Databases and WAL files
+    ".db",
+    ".db-shm",
+    ".db-wal",
 }
 
 
@@ -87,6 +93,7 @@ SKIP_FILES: set[str] = {
     "package-lock.json",
     "yarn.lock",
     "go.sum",
+    ".gitkeep",
 }
 
 
@@ -98,6 +105,8 @@ SKIP_FILE_PATTERNS: set[str] = {
     ".min.js",
     ".min.ts",
     ".bundle.js",
+    # Spark debug logs
+    "spark_debug",
 }
 
 

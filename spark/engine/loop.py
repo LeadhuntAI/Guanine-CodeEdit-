@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _DEFAULT_MAX_ITERATIONS = 20
+_DEFAULT_CONTEXT_BUDGET = 0  # characters; 0 = compression disabled
 
 _REACT_FORMAT_INSTRUCTIONS = """\
 You must respond using EXACTLY one of these two formats:
@@ -240,6 +241,100 @@ def process_agentic_loop(
 
 
 # ---------------------------------------------------------------------------
+# Context compression
+# ---------------------------------------------------------------------------
+
+def _compress_old_messages(messages: list[dict], keep_recent: int = 6) -> list[dict]:
+    """Compress old tool-call exchanges in the message history.
+
+    Keeps:
+    - messages[0] (system prompt)
+    - messages[1] (user message with area assignment)
+    - The most recent *keep_recent* messages
+
+    Replaces the middle with a single summary message that lists files read,
+    tools called, and key findings extracted from assistant reasoning.
+
+    This is a heuristic compression — no LLM call, instant and free.
+    """
+    # Need at least system + user + keep_recent + some middle to compress
+    min_to_compress = 2 + keep_recent + 4  # at least 4 messages worth compressing
+    if len(messages) < min_to_compress:
+        return messages
+
+    head = messages[:2]  # system + user
+    tail = messages[-keep_recent:]
+    middle = messages[2:-keep_recent]
+
+    if not middle:
+        return messages
+
+    # Extract summary info from middle messages
+    files_read: list[str] = []
+    tools_called: dict[str, int] = {}
+    findings: list[str] = []
+
+    for msg in middle:
+        role = msg.get("role", "")
+
+        if role == "tool":
+            # Parse tool results for file paths
+            content = msg.get("content", "")
+            try:
+                data = json.loads(content)
+                # read_file results have a "content" key with file data
+                if "total_lines" in data or ("content" in data and "lines" in data):
+                    # Don't store file content — just note it was read
+                    pass
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+        elif role == "assistant":
+            # Extract tool call info
+            for tc in msg.get("tool_calls", []):
+                func = tc.get("function", {})
+                name = func.get("name", "unknown")
+                tools_called[name] = tools_called.get(name, 0) + 1
+                # Extract file paths from arguments
+                try:
+                    args = json.loads(func.get("arguments", "{}"))
+                    for key in ("path", "file_path", "file"):
+                        if key in args:
+                            files_read.append(str(args[key]))
+                except (json.JSONDecodeError, TypeError):
+                    pass
+
+            # Extract reasoning from content
+            content = msg.get("content", "")
+            if content and len(content) > 20:
+                # Keep first 150 chars of reasoning as a finding
+                findings.append(content[:150].strip())
+
+    # Build summary
+    parts = ["CONTEXT SUMMARY (compressed from earlier iterations):"]
+    if files_read:
+        unique_files = list(dict.fromkeys(files_read))  # dedupe, preserve order
+        parts.append(f"Files read: {', '.join(unique_files[:20])}")
+    if tools_called:
+        tool_summary = ", ".join(f"{name}({count}x)" for name, count in tools_called.items())
+        parts.append(f"Tools used: {tool_summary}")
+    if findings:
+        parts.append("Key observations:")
+        for f in findings[:5]:
+            parts.append(f"  - {f}")
+    parts.append("Continue your analysis with the remaining files.")
+
+    summary_msg = {"role": "user", "content": "\n".join(parts)}
+
+    result = head + [summary_msg] + tail
+    logger.debug(
+        "Compressed messages: %d -> %d (removed %d middle messages)",
+        len(messages), len(result), len(middle),
+    )
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Native tool-calling loop
 # ---------------------------------------------------------------------------
 
@@ -269,10 +364,18 @@ def process_agentic_loop_native(
         messages.extend(session.chat_history)
 
     tools = _tool_schemas(tool_registry)
+    context_budget = layer_def.get("context_budget", _DEFAULT_CONTEXT_BUDGET)
     final_answer = ""
     last_content = ""  # track the last non-empty content for fallback
+    _consecutive_errors = 0  # detect stuck loops (same error repeating)
+    _MAX_CONSECUTIVE_ERRORS = 3  # bail after 3 rounds of all-error tool calls
 
     for iteration in range(max_iter):
+        # Check for shutdown between iterations
+        if hasattr(client, 'shutdown_event') and client.shutdown_event and client.shutdown_event.is_set():
+            logger.info("Shutdown requested, stopping agentic loop")
+            final_answer = last_content or "Interrupted by user."
+            break
         logger.debug("Native loop iteration %d/%d", iteration + 1, max_iter)
         ui.llm_start(model)
         try:
@@ -321,6 +424,35 @@ def process_agentic_loop_native(
                         "content": observation,
                     }
                 )
+
+            # Detect stuck loops: all tool calls returned errors
+            all_errors = all(
+                '"error"' in messages[-(i + 1)].get("content", "")
+                for i in range(len(tool_calls))
+                if messages[-(i + 1)].get("role") == "tool"
+            )
+            if all_errors:
+                _consecutive_errors += 1
+                if _consecutive_errors >= _MAX_CONSECUTIVE_ERRORS:
+                    logger.warning("Stuck loop detected: %d consecutive all-error rounds", _consecutive_errors)
+                    messages.append({
+                        "role": "user",
+                        "content": (
+                            "SYSTEM: Your last several tool calls all failed with errors. "
+                            "Stop retrying the same approach. Either try different arguments "
+                            "or produce your final answer with whatever information you have."
+                        ),
+                    })
+                    _consecutive_errors = 0  # reset, give one more chance
+            else:
+                _consecutive_errors = 0
+
+            # Context compression: if messages are getting large, compress old exchanges
+            if context_budget > 0:
+                estimated_chars = sum(len(m.get("content", "")) for m in messages)
+                if estimated_chars > int(context_budget * 0.6):
+                    messages = _compress_old_messages(messages, keep_recent=6)
+
         elif content:
             # No tool calls, just content — we're done
             messages.append({"role": "assistant", "content": content})

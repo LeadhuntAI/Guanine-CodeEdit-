@@ -4,9 +4,25 @@ Auto-generated index of project rules and documentation.
 
 ## Documentation Rules
 
-- [docs/project-root-and-scripts.md](docs/project-root-and-scripts.md) — Project entry point (CLAUDE.md), standalone PowerShell recovery script, sessions/ runtime directory, and operational metadata.
-- [docs/web-templates.md](docs/web-templates.md) — Jinja2 template suite for the Flask File Recovery Merger: base layout, setup wizard, file browser, conflict resolution, merge editor, coverage dashboard, progress pages (SSE), and activity log.
-- [docs/agentic-docs-and-workflows.md](docs/agentic-docs-and-workflows.md) — Documentation suite, templates, and example definitions for the agentic workflow engine — covers workflows, skills, knowledge system, JSON definitions, and execution model.
-- [docs/core-application.md](docs/core-application.md) — Monolithic Flask application (file_merger.py) implementing multi-source file recovery, conflict detection, interactive merge editing, SQLite persistence, and SSE progress streaming.
-- [docs/agentic-engine.md](docs/agentic-engine.md) — Lightweight autonomous AI workflow engine with multi-layer orchestration, dual-mode agentic loops (ReAct/native), OpenRouter HTTP client, safe tool execution, and knowledge resolution for rules/skills injection into LLM prompts.
-- [docs/agentic-tools.md](docs/agentic-tools.md) — Sandboxed filesystem and code search toolkit for the agentic engine — 5 tools (read_file, write_file, list_directory, search_code, get_file_tree) with path validation, JSON interface, and declarative registry via definitions.json.
+### Agent Core System
+- [docs/agent-core-schema.md](docs/agent-core-schema.md) — SQLite-backed persistence for repos, sessions, files, conversations, and review decisions. Most-imported module (5 importers).
+- [docs/agent-tools-and-workflow.md](docs/agent-tools-and-workflow.md) — Sandboxed file operations, shell execution, tool registry, and workflow orchestration.
+- [docs/agent-mcp-server.md](docs/agent-mcp-server.md) — MCP server exposing agent capabilities to external clients (Claude Code, Cursor, etc.).
+- [docs/agent-review.md](docs/agent-review.md) — Flask Blueprint: agent UI, review bridge, chat SSE, git push/deploy, model management, OpenCode install/status.
+
+### Agent Backends & Remote
+- [docs/agent-backends.md](docs/agent-backends.md) — Pluggable backend abstraction (BuiltinBackend, OpenCodeBackend), per-repo dynamic port allocation, backend factory.
+- [docs/opencode-client.md](docs/opencode-client.md) — OpenCode HTTP client: health checks, auto-start, session/message management, SSE streaming.
+- [docs/git-ops.md](docs/git-ops.md) — Git operations: clone, pull, branch, commit, push, SSH deploy for remote project workflows.
+
+### Engine & Tools
+- [docs/agentic-engine.md](docs/agentic-engine.md) — Lightweight autonomous AI workflow engine with multi-layer orchestration, dual-mode agentic loops (ReAct/native), OpenRouter HTTP client, safe tool execution, and knowledge resolution.
+- [docs/agentic-tools.md](docs/agentic-tools.md) — Sandboxed filesystem and code search toolkit — 5 tools (read_file, write_file, list_directory, search_code, get_file_tree) with path validation and JSON interface.
+
+### Web UI
+- [docs/ui-templates-agent.md](docs/ui-templates-agent.md) — Agent session, conversation, diff, repo, and IDE shell templates.
+- [docs/ui-templates-merge-and-browse.md](docs/ui-templates-merge-and-browse.md) — File browsing, conflict resolution, merge progress templates.
+
+### Application Core
+- [docs/file-merger-and-sandbox.md](docs/file-merger-and-sandbox.md) — Core Flask app: multi-source file recovery, conflict detection, merge editing, SQLite persistence.
+- [docs/project-overview.md](docs/project-overview.md) — High-level project overview, feature index, and area map.

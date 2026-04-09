@@ -1,4 +1,5 @@
 sessions/
+logs/
 .merger_config.json
 .merger_state.json
 merge_log_*.json
@@ -12,3 +13,12 @@ build/
 .code-index/
 0.12.0
 .claude/sandbox-active
+node_modules/
+package.json
+package-lock.json
+_cm_bundle_entry.js
+opencode.json
+.claude/spark_debug_*.log
+.claude/jcodemunch.log
+e2e_test_verification.md
+plans/

@@ -1,0 +1,9 @@
+{
+  "name": "doc_patcher",
+  "model": "anthropic/claude-opus-4.6",
+  "system_prompt_file": "prompts/doc_patcher.md",
+  "tools": ["read_file", "code_search"],
+  "max_tokens": 8192,
+  "temperature": 0.1,
+  "max_iterations": 15
+}

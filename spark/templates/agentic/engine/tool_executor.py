@@ -148,6 +148,37 @@ def parse_tool_args(raw_args: str) -> dict:
 # Tool execution
 # ---------------------------------------------------------------------------
 
+def _unpack_kwargs(args: dict) -> dict:
+    """Fix model quirk where real arguments are wrapped in a ``kwargs`` string.
+
+    Some models emit tool calls like::
+
+        {"path": ".", "kwargs": "{\\"path\\": \\"CLAUDE.md\\"}"}
+
+    The real arguments are inside ``kwargs`` as a JSON string.  When detected,
+    merge them into the top-level dict (kwargs values win over placeholders).
+    """
+    raw_kwargs = args.get("kwargs")
+    if not isinstance(raw_kwargs, str) or not raw_kwargs.strip():
+        return args
+
+    try:
+        inner = json.loads(raw_kwargs)
+    except (json.JSONDecodeError, TypeError):
+        return args
+
+    if not isinstance(inner, dict):
+        return args
+
+    merged = {k: v for k, v in args.items() if k != "kwargs"}
+    for k, v in inner.items():
+        if k not in merged or merged[k] in (".", "", None):
+            merged[k] = v
+        elif k in merged:
+            merged[k] = v
+    return merged
+
+
 def execute_tool_call(
     available_tools: dict[str, Any],
     tool_name: str,
@@ -180,6 +211,9 @@ def execute_tool_call(
             args = parse_tool_args(tool_args)
         else:
             args = dict(tool_args) if tool_args else {}
+
+        # Fix model quirk: some models wrap real args inside a "kwargs" string
+        args = _unpack_kwargs(args)
 
         # Filter args to match the function's actual signature
         args = _filter_args(func, args)

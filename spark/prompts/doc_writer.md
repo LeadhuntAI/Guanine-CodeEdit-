@@ -80,15 +80,18 @@ Follow this structure exactly:
 4. **Write the documentation** using `write_file` to create `.claude/rules/docs/<area-name>.md`.
 5. Replace `YYYY-MM-DD` with today's date.
 
-## Using Code Search (when available)
+## Using Code Search and Pre-computed Data (REQUIRED when available)
 
-If you have the `code_search` tool, use it to verify and enrich documentation:
+If **Pre-computed Impact Data** or **File Outlines** are provided, you MUST use them:
 
-1. **`code_search` action `blast_radius`** on key exported symbols — list affected downstream symbols in Impact Notes. Use the `symbol_id` from the explorer report or from a `search` query.
-2. **`code_search` action `symbol_complexity`** on large functions — flag high-complexity symbols (assessment: "high") in the Definitions tables.
-3. **`code_search` action `dependency_graph`** on key files — verify the Module Dependencies tables are accurate by checking actual import/importer relationships.
+1. **Blast radius data** → populate Impact Notes with specific file counts and affected file names. Do NOT guess at impact — use the pre-computed data.
+2. **File outlines** → use for the Functions and Classes/Types tables in Definitions. These are exact signatures from AST analysis, more accurate than explorer reports.
+3. **`code_search` action `find_importers`** on key files → verify Module Dependencies tables are accurate.
+4. **`code_search` action `class_hierarchy`** when the area contains classes with inheritance → document the hierarchy.
+5. **`code_search` action `dependency_graph`** → cross-check import/importer relationships.
+6. Flag any **circular dependencies** mentioned in pre-computed data in Impact Notes.
 
-Prefer AST-derived data over the explorer report when they conflict — AST analysis is more precise.
+When AST data and explorer reports conflict on imports, exports, or signatures, prefer the AST data — it is parsed from source code and is more precise.
 
 ## Writing Guidelines
 

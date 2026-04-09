@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title_suffix %} - Runs{% endblock %}
+
+{% block content %}
+<h1>Run History</h1>
+
+{% if runs %}
+<table>
+  <thead>
+    <tr>
+      <th>ID</th>
+      <th>Mode</th>
+      <th>Status</th>
+      <th>Started</th>
+      <th>Completed</th>
+      <th>Iterations</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for r in runs %}
+    <tr>
+      <td><a href="/runs/{{ r.id }}">#{{ r.id }}</a></td>
+      <td><span class="badge badge-blue">{{ r.mode }}</span></td>
+      <td>
+        {% if r.status == 'completed' %}<span class="badge badge-green">{{ r.status }}</span>
+        {% elif r.status == 'running' %}<span class="badge badge-purple">{{ r.status }}</span>
+        {% else %}<span class="badge badge-red">{{ r.status }}</span>{% endif %}
+      </td>
+      <td style="font-size: 11px;">{{ r.started_at }}</td>
+      <td style="font-size: 11px;">{{ r.completed_at or '-' }}</td>
+      <td>{{ r.iterations_completed or 0 }} / {{ r.iterations_planned or '?' }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<div class="empty">No runs recorded yet.</div>
+{% endif %}
+{% endblock %}

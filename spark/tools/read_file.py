@@ -48,14 +48,14 @@ def execute(
         total = len(lines)
 
         if start_line is not None or end_line is not None:
-            s = (start_line or 1) - 1  # convert to 0-based
-            e = end_line or total
+            s = (int(start_line) if start_line is not None else 1) - 1  # convert to 0-based
+            e = int(end_line) if end_line is not None else total
             s = max(0, s)
             e = min(total, e)
             lines = lines[s:e]
 
         content = "".join(lines)
-        return json.dumps({"content": content, "lines": len(lines)})
+        return json.dumps({"content": content, "lines": len(lines), "total_lines": total})
 
     except Exception as exc:
         return json.dumps({"error": str(exc)})

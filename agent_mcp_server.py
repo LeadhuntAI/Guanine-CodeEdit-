@@ -26,6 +26,7 @@ Configure in your MCP client:
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sys
 
@@ -33,6 +34,8 @@ from mcp.server.fastmcp import FastMCP
 
 import agent_schema
 import agent_tools
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Server setup
@@ -318,10 +321,62 @@ def signal_done(summary: str) -> str:
     """Signal that you have completed your task.
     Provide a summary of what you changed. This finalizes the session for human review."""
     session, _ = _require_session()
-    return agent_tools.signal_done(
+    result = agent_tools.signal_done(
         summary=summary,
         session_id=session["session_id"],
     )
+
+    # Auto-create review session so changes appear in the IDE immediately
+    try:
+        from agent_review import _create_review_session
+        merge_sid = _create_review_session(session["session_id"])
+        logger.info("Auto-created review session %s for %s", merge_sid, session["session_id"])
+    except Exception as e:
+        logger.warning("Auto-review creation failed (user can trigger manually): %s", e)
+
+    return result
+
+
+@mcp.tool()
+def spawn_agent(task: str, backend: str = "builtin",
+                agent: str = "build", files: str = "") -> str:
+    """Spawn a sub-agent session for parallel task execution.
+
+    Creates a child session linked to the current session. The child gets
+    its own isolated workspace and can use a different backend/agent type.
+
+    Args:
+        task: Description of what the sub-agent should do.
+        backend: Agent backend - 'builtin' or 'opencode'.
+        agent: Agent type - 'build', 'plan', or 'explore'.
+        files: Comma-separated list of relative file paths to pre-checkout (optional).
+    """
+    session, _ = _require_session()
+    file_list = [f.strip() for f in files.split(',') if f.strip()] if files else None
+    return agent_tools.spawn_agent(
+        task=task,
+        parent_session_id=session["session_id"],
+        backend=backend,
+        agent=agent,
+        files=file_list,
+    )
+
+
+@mcp.tool()
+def reconcile(session_id: str = "") -> str:
+    """Reconcile file changes for a session, bridging to the review system.
+
+    Walks the workspace, computes diffs, updates file stats, and transitions
+    the session to 'completed'. Call this after an agent finishes work.
+
+    Args:
+        session_id: Session ID to reconcile. Defaults to the active session.
+    """
+    if not session_id:
+        session, _ = _require_session()
+        session_id = session["session_id"]
+    result = agent_tools.reconcile_session(session_id)
+    return json.dumps(result, indent=2)
 
 
 # ---------------------------------------------------------------------------

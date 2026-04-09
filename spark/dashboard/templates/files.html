@@ -1,0 +1,122 @@
+{% extends "base.html" %}
+{% block title_suffix %} - Files{% endblock %}
+
+{% block content %}
+<h1>File Tracking</h1>
+
+<h2 style="margin-top: 0;">Status</h2>
+<div class="filters">
+  <a href="/files{% if category_filter %}?category={{ category_filter }}{% endif %}" class="{% if not status_filter %}active{% endif %}">All ({{ counts.all }})</a>
+  <a href="/files?status=documented{% if category_filter %}&category={{ category_filter }}{% endif %}" class="{% if status_filter == 'documented' %}active{% endif %}">Documented ({{ counts.documented }})</a>
+  <a href="/files?status=stale{% if category_filter %}&category={{ category_filter }}{% endif %}" class="{% if status_filter == 'stale' %}active{% endif %}">Stale ({{ counts.stale }})</a>
+  <a href="/files?status=undocumented{% if category_filter %}&category={{ category_filter }}{% endif %}" class="{% if status_filter == 'undocumented' %}active{% endif %}">Undocumented ({{ counts.undocumented }})</a>
+</div>
+
+<h2>Category</h2>
+<div class="filters">
+  <a href="/files{% if status_filter %}?status={{ status_filter }}{% endif %}" class="{% if not category_filter %}active{% endif %}">All</a>
+  {% for cat in ['source', 'ui', 'config', 'docs', 'template', 'script', 'other'] %}
+    {% if cat in cat_counts %}
+    <a href="/files?category={{ cat }}{% if status_filter %}&status={{ status_filter }}{% endif %}" class="{% if category_filter == cat %}active{% endif %}">{{ cat }} ({{ cat_counts[cat] }})</a>
+    {% endif %}
+  {% endfor %}
+</div>
+
+{% set source_files = files | selectattr('documentable') | list %}
+{% set infra_files = files | rejectattr('documentable') | list %}
+
+{# ── Source Files Section ── #}
+{% if source_files %}
+<div class="section-header" style="display: flex; align-items: center; gap: 8px; margin: 24px 0 12px;">
+  <h2 style="margin: 0;">Source Files <span style="color: var(--accent); font-size: 14px;">({{ source_files|length }})</span></h2>
+  <span style="font-size: 12px; color: var(--text-dim);">Documentation targets</span>
+</div>
+<table>
+  <thead>
+    <tr>
+      <th>Path</th>
+      <th>Language</th>
+      <th>Lines Now</th>
+      <th>Lines @ Doc</th>
+      <th>Delta</th>
+      <th>Status</th>
+      <th>Doc</th>
+      <th>Last Scanned</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for f in source_files %}
+    <tr class="{% if f.status == 'stale' and f.change_magnitude == 'major' %}row-major{% elif f.status == 'stale' and f.change_magnitude == 'moderate' %}row-moderate{% elif f.status == 'stale' %}row-minor{% endif %}">
+      <td>{{ f.path }}</td>
+      <td>{{ f.language or '-' }}</td>
+      <td>{{ f.line_count or 0 }}</td>
+      <td>{% if f.doc_lines is not none %}{{ f.doc_lines }}{% else %}<span style="color: var(--text-dim);">-</span>{% endif %}</td>
+      <td>
+        {% if f.line_delta is not none %}
+          {% if f.line_delta > 0 %}<span style="color: var(--yellow); font-weight: 600;">+{{ f.line_delta }}</span>
+          {% elif f.line_delta < 0 %}<span style="color: var(--green); font-weight: 600;">{{ f.line_delta }}</span>
+          {% else %}<span style="color: var(--text-dim);">0</span>{% endif %}
+        {% else %}<span style="color: var(--text-dim);">-</span>{% endif %}
+      </td>
+      <td>
+        {% if f.status == 'documented' %}<span class="badge badge-green">documented</span>
+        {% elif f.status == 'stale' %}<span class="badge badge-yellow">stale</span>
+        {% else %}<span class="badge badge-grey">undocumented</span>{% endif %}
+      </td>
+      <td style="font-size: 11px;">
+        {% if f.doc_path %}<a href="/docs/view/{{ f.doc_path | replace('.claude/', '') | replace('rules/docs/', '') | replace('.md', '') }}">{{ f.doc_date[:10] if f.doc_date else 'view' }}</a>
+        {% else %}-{% endif %}
+      </td>
+      <td style="font-size: 11px;">{{ f.last_scanned_at[:19] if f.last_scanned_at else '-' }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+{# ── Infrastructure Section ── #}
+{% if infra_files %}
+<details style="margin-top: 24px;">
+  <summary style="cursor: pointer; user-select: none; padding: 8px 0;">
+    <h2 style="display: inline; margin: 0;">Infrastructure Files <span style="color: var(--text-dim); font-size: 14px;">({{ infra_files|length }})</span></h2>
+    <span style="font-size: 12px; color: var(--text-dim); margin-left: 8px;">Config, templates, UI, docs — not documentation targets</span>
+  </summary>
+  <table style="margin-top: 8px;">
+    <thead>
+      <tr>
+        <th>Path</th>
+        <th>Category</th>
+        <th>Language</th>
+        <th>Lines</th>
+        <th>Status</th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for f in infra_files %}
+      <tr>
+        <td>{{ f.path }}</td>
+        <td>
+          {% if f.category == 'ui' %}<span class="badge badge-purple">ui</span>
+          {% elif f.category == 'config' %}<span class="badge badge-grey">config</span>
+          {% elif f.category == 'docs' %}<span class="badge badge-green">docs</span>
+          {% elif f.category == 'template' %}<span class="badge badge-yellow">template</span>
+          {% else %}<span class="badge badge-grey">other</span>{% endif %}
+        </td>
+        <td>{{ f.language or '-' }}</td>
+        <td>{{ f.line_count or 0 }}</td>
+        <td>
+          {% if f.status == 'documented' %}<span class="badge badge-green">documented</span>
+          {% elif f.status == 'stale' %}<span class="badge badge-yellow">stale</span>
+          {% else %}<span class="badge badge-grey">-</span>{% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</details>
+{% endif %}
+
+{% if not files %}
+<div class="empty">No files match this filter.</div>
+{% endif %}
+{% endblock %}

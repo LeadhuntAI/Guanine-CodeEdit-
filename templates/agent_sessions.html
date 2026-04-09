@@ -109,8 +109,18 @@
                         <textarea name="task_description" class="form-control" rows="3" required placeholder="Fix the login bug in auth.py..."></textarea>
                     </div>
                     <div class="mb-3">
-                        <label class="form-label">Agent Model (optional)</label>
-                        <input type="text" name="agent_model" class="form-control" placeholder="e.g. anthropic/claude-sonnet-4">
+                        <label class="form-label">Backend</label>
+                        <select name="backend" class="form-select" id="sessionBackend">
+                            <option value="builtin">Builtin (OpenRouter)</option>
+                            <option value="opencode">OpenCode</option>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Agent Model</label>
+                        <select name="agent_model" class="form-select" id="sessionModel">
+                            <option value="">Use repo default</option>
+                        </select>
+                        <div class="form-text">Select a model or leave as default. Configure models in <a href="{{ url_for('agent.repos') }}">repo settings</a>.</div>
                     </div>
                     <div class="mb-3">
                         <label class="form-label">External Context (optional)</label>
@@ -127,4 +137,40 @@
         </div>
     </div>
 </div>
+
+<script>
+(function() {
+    const repoSelect = document.querySelector('select[name="repo_id"]');
+    const modelSelect = document.getElementById('sessionModel');
+    const backendSelect = document.getElementById('sessionBackend');
+    if (!repoSelect || !modelSelect) return;
+
+    repoSelect.addEventListener('change', async function() {
+        const repoId = this.value;
+        modelSelect.innerHTML = '<option value="">Use repo default</option>';
+        if (!repoId) return;
+
+        try {
+            const resp = await fetch(`/agent/api/repo-models/${repoId}`);
+            const data = await resp.json();
+
+            if (data.models && data.models.length) {
+                data.models.forEach(m => {
+                    const opt = document.createElement('option');
+                    opt.value = m.id;
+                    opt.textContent = (m.label || m.id) + (m.providers ? ` (${m.providers})` : '');
+                    if (m.id === data.default_model) opt.selected = true;
+                    modelSelect.appendChild(opt);
+                });
+            }
+
+            if (data.default_backend && backendSelect) {
+                backendSelect.value = data.default_backend;
+            }
+        } catch (e) {
+            console.warn('Failed to load models for repo:', e);
+        }
+    });
+})();
+</script>
 {% endblock %}

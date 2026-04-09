@@ -2,7 +2,7 @@
   "tools": [
     {
       "name": "read_file",
-      "description": "Read the contents of a file. Returns the full file content as text.",
+      "description": "Read raw file contents. For code files: PREFER code_search(file_outline) to get structure, and code_search(get_source) to read specific symbols. Only use read_file for non-code files, configuration, or when you need raw implementation logic that code_search cannot provide. When using start_line/end_line, always read at least 100 lines per call.",
       "function_path": "spark.tools.read_file.execute",
       "parameters_schema": {
         "type": "object",
@@ -192,20 +192,36 @@
     },
     {
       "name": "code_search",
-      "description": "Search code symbols, get source code, file outlines, dependency graphs, blast radius analysis, symbol complexity, and repo overviews. Requires code indexing to be enabled.",
+      "description": "PRIMARY tool for code exploration. Use INSTEAD of read_file for all code analysis. Key actions: file_outline (get all symbols in a file — use this first), get_source (read a specific function/class by symbol_id), dependency_graph (imports and importers), search (find symbols by name), call_hierarchy (callers/callees across files), impact_preview (what breaks if symbol changes), related_symbols (find functionally related symbols), hotspots (complexity × churn risk), repo_health (one-call triage), find_references (who imports this identifier), context_bundle (symbol + imports with token budgeting), ranked_context (BM25 + PageRank query search). Much faster and more accurate than reading raw files.",
       "function_path": "spark.tools.code_search.execute",
       "parameters_schema": {
         "type": "object",
         "properties": {
-          "action": {"type": "string", "enum": ["search", "get_source", "file_outline", "dependency_graph", "blast_radius", "symbol_complexity", "repo_overview"], "description": "search: find symbols by query. get_source: get source for a symbol ID. file_outline: list symbols in a file. dependency_graph: file-level import graph. blast_radius: files affected by changing a symbol. symbol_complexity: cyclomatic complexity metrics. repo_overview: high-level repo outline."},
+          "action": {"type": "string", "enum": ["search", "get_source", "file_outline", "dependency_graph", "blast_radius", "symbol_complexity", "repo_overview", "coupling_metrics", "symbol_importance", "changed_symbols", "dependency_cycles", "class_hierarchy", "find_importers", "call_hierarchy", "impact_preview", "related_symbols", "hotspots", "repo_health", "find_references", "context_bundle", "ranked_context"], "description": "search: find symbols by query. get_source: get source for a symbol ID. file_outline: list symbols in a file. dependency_graph: file-level import graph. blast_radius: files affected by changing a symbol. symbol_complexity: cyclomatic complexity metrics. repo_overview: high-level repo outline. coupling_metrics: afferent/efferent coupling for a file. symbol_importance: rank symbols by PageRank centrality. changed_symbols: symbols changed since a git SHA. dependency_cycles: circular dependency detection. class_hierarchy: inheritance tree for a class. find_importers: files that import a given file. call_hierarchy: callers and callees for a symbol N levels deep (direction: callers/callees/both). impact_preview: transitive what-breaks analysis for a symbol. related_symbols: heuristic clustering of related symbols (same-file, shared-importers, name overlap). hotspots: complexity × churn scoring for risk detection. repo_health: one-call triage (dead code, complexity, hotspots, cycles, unstable modules). find_references: import-level identifier lookup with optional call-chain enrichment. context_bundle: symbol + imports bundle with token budgeting. ranked_context: BM25 + PageRank combined query search with greedy token packing."},
           "query": {"type": "string", "description": "Search query (for search action)"},
-          "symbol_id": {"type": "string", "description": "Symbol ID like 'src/auth.py::login#function' (for get_source, blast_radius, symbol_complexity)"},
-          "file_path": {"type": "string", "description": "File path relative to repo root (for file_outline, dependency_graph)"},
+          "symbol_id": {"type": "string", "description": "Symbol ID like 'src/auth.py::login#function' (for get_source, blast_radius, symbol_complexity, call_hierarchy, impact_preview, related_symbols, context_bundle)"},
+          "file_path": {"type": "string", "description": "File path relative to repo root (for file_outline, dependency_graph, coupling_metrics, find_importers)"},
           "kind": {"type": "string", "description": "Filter by symbol kind: function, class, method, variable, etc. (for search action)"},
           "file_pattern": {"type": "string", "description": "Glob pattern to filter files, e.g. 'src/auth/**' (for search action)"},
-          "limit": {"type": "integer", "description": "Max results (default 20, 0 for all)"},
-          "direction": {"type": "string", "enum": ["imports", "importers", "both"], "description": "Direction for dependency_graph: imports (what this file depends on), importers (what depends on this file), both (default: imports)"},
-          "depth": {"type": "integer", "description": "Traversal depth for dependency_graph and blast_radius (1-3, default: 1)"}
+          "limit": {"type": "integer", "description": "Max results (default 20, 0 for all). Also used as top_n for symbol_importance/hotspots and max_results for related_symbols/find_references."},
+          "direction": {"type": "string", "description": "Direction of traversal. For dependency_graph: imports/importers/both. For call_hierarchy: callers/callees/both. Default varies by action."},
+          "depth": {"type": "integer", "description": "Traversal depth (1-3 for dependency_graph/blast_radius, 1-5 for call_hierarchy, default: 1)"},
+          "since_sha": {"type": "string", "description": "Git SHA to compare against for changed_symbols action"},
+          "include_blast_radius": {"type": "boolean", "description": "Include blast radius per changed symbol (for changed_symbols action)"},
+          "class_name": {"type": "string", "description": "Class name for class_hierarchy action"},
+          "algorithm": {"type": "string", "enum": ["pagerank", "betweenness"], "description": "Ranking algorithm for symbol_importance (default: pagerank)"},
+          "scope": {"type": "string", "description": "Glob pattern to scope symbol_importance/ranked_context analysis, e.g. 'src/**'"},
+          "identifier": {"type": "string", "description": "Symbol or module name to look up (for find_references, singular mode)"},
+          "identifiers": {"type": "string", "description": "JSON array of symbol/module names for batch find_references, e.g. '[\"Database\", \"Config\"]'"},
+          "include_call_chain": {"type": "boolean", "description": "Enrich find_references results with calling_symbols in each file (default: false)"},
+          "include_callers": {"type": "boolean", "description": "Add caller file list to context_bundle results (default: false)"},
+          "output_format": {"type": "string", "enum": ["json", "markdown"], "description": "Output format for context_bundle (default: json)"},
+          "token_budget": {"type": "integer", "description": "Max tokens to return for context_bundle/ranked_context. 0 = no limit (default: 0 for context_bundle, 4000 for ranked_context)"},
+          "budget_strategy": {"type": "string", "enum": ["most_relevant", "core_first", "compact"], "description": "How to rank/trim when token_budget is set in context_bundle: most_relevant (by centrality), core_first (primary symbol first), compact (signatures only)"},
+          "strategy": {"type": "string", "enum": ["combined", "bm25", "centrality"], "description": "Ranking strategy for ranked_context: combined (BM25 + PageRank), bm25 (text relevance only), centrality (PageRank only)"},
+          "include_kinds": {"type": "string", "description": "JSON array of symbol kinds to restrict ranked_context results, e.g. '[\"function\", \"class\"]'"},
+          "days": {"type": "integer", "description": "Churn look-back window in days for hotspots/repo_health (default: 90)"},
+          "min_complexity": {"type": "integer", "description": "Minimum cyclomatic complexity for hotspots (default: 2, filters trivial getters/setters)"}
         },
         "required": ["action"]
       }

@@ -1,0 +1,8 @@
+{
+  "name": "overview_writer",
+  "model": "z-ai/glm-5-turbo",
+  "system_prompt_file": "prompts/overview_writer.md",
+  "tools": [],
+  "max_tokens": 8192,
+  "temperature": 0.1
+}

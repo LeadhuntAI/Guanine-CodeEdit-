@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title_suffix %} - Docs{% endblock %}
+
+{% block content %}
+<h1>Documentation &amp; Rules</h1>
+
+{% set overview = docs | selectattr("area_name", "equalto", "project-overview") | first %}
+{% if overview %}
+<div class="card" style="margin-bottom: 20px; padding: 12px 16px; border-left: 3px solid var(--accent);">
+  <a href="/docs/view/project-overview" style="font-size: 15px; font-weight: bold;">Project Overview &amp; Feature Index</a>
+  <div style="color: var(--text-dim); font-size: 12px; margin-top: 4px;">What this project does, all features, architecture &mdash; start here</div>
+  {% if overview.generated_at %}<div style="color: var(--text-dim); font-size: 11px; margin-top: 4px;">Generated: {{ overview.generated_at[:19] }}</div>{% endif %}
+</div>
+{% endif %}
+
+{% set area_docs = docs | rejectattr("area_name", "equalto", "project-overview") | list %}
+{% if area_docs %}
+<h2>Area Documentation</h2>
+<p style="color: var(--text-dim); font-size: 13px; margin-bottom: 12px;">Each area groups related source files. Click an area name to read its documentation and see why files are grouped together.</p>
+<table>
+  <thead>
+    <tr>
+      <th>Area</th>
+      <th>Doc Path</th>
+      <th>Generated</th>
+      <th>Status</th>
+      <th>Files Covered</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for d in area_docs %}
+    <tr>
+      <td><a href="/docs/view/{{ d.area_name }}">{{ d.area_name }}</a></td>
+      <td style="font-size: 11px;">{{ d.doc_path }}</td>
+      <td style="font-size: 11px;">{{ d.generated_at[:19] if d.generated_at else '-' }}</td>
+      <td>
+        {% if d.status == 'current' %}<span class="badge badge-green">current</span>
+        {% else %}<span class="badge badge-yellow">{{ d.status }}</span>{% endif %}
+      </td>
+      <td>{{ d.file_count }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% elif not overview %}
+<div class="empty">No documentation records found in the database.</div>
+{% endif %}
+{% endblock %}

@@ -17,6 +17,7 @@ def execute(
 ) -> str:
     """Walk directory tree and produce indented text. Returns JSON string."""
     try:
+        max_depth = int(max_depth)
         base = os.path.realpath(_base_dir)
         lines = []
         total_files = 0

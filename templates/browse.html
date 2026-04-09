@@ -3,145 +3,396 @@
 
 {% block extra_css %}
 <style>
-    .browse-layout { display: flex; height: calc(100vh - 130px); gap: 0; }
-    .browse-sidebar { width: 520px; min-width: 380px; max-width: 60vw; overflow-y: auto; border-right: 1px solid #333; resize: horizontal; }
-    .browse-detail { flex: 1; overflow-y: auto; background: #1a1d21; }
+    /* ================================================================
+       IDE Layout
+       ================================================================ */
+    .ide-layout { display: flex; height: calc(100vh - 56px); overflow: hidden; }
 
-    /* Filter bar */
-    .filter-bar { padding: 8px 12px; border-bottom: 1px solid #333; background: #1a1d21; position: sticky; top: 0; z-index: 10; }
-    .filter-bar label { font-size: 0.78rem; cursor: pointer; margin-right: 10px; white-space: nowrap; }
-
-    /* Directory rows */
-    .dir-row { padding: 3px 8px; cursor: pointer; display: flex; align-items: center; gap: 4px; font-size: 0.82rem; border-bottom: 1px solid #1e2125; }
-    .dir-row:hover { background: rgba(255,255,255,0.04); }
-    .dir-row .dir-chev { font-size: 0.6rem; width: 14px; text-align: center; transition: transform 0.15s; color: #666; flex-shrink: 0; }
-    .dir-row .dir-chev.open { transform: rotate(90deg); }
-    .dir-children { display: none; }
-    .dir-children.open { display: block; }
-
-    /* File item block */
-    .file-item { border-bottom: 1px solid #1a1d21; }
-    .file-name-row {
-        padding: 3px 8px; cursor: pointer; display: flex; align-items: center; gap: 4px;
-        font-size: 0.82rem; transition: background 0.1s;
+    .ide-sidebar {
+        width: 320px; min-width: 0; display: flex; flex-direction: column;
+        background: #181b20; border-right: 1px solid #2d2d2d; transition: width 0.2s ease;
     }
-    .file-name-row:hover { background: rgba(255,255,255,0.04); }
-    .file-name-row.active { background: rgba(13,110,253,0.15); border-left: 3px solid #0d6efd; padding-left: 5px; }
-    .file-name-row .fname {
-        flex: 1; font-family: 'Cascadia Code','Consolas',monospace;
-        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    .ide-sidebar.collapsed { width: 0 !important; overflow: hidden; border-right: none; }
+
+    .ide-detail { flex: 1; overflow-y: auto; background: #1e2127; }
+
+    /* Resize handle */
+    .resize-handle {
+        width: 4px; cursor: col-resize; background: transparent;
+        flex-shrink: 0; position: relative; z-index: 20;
     }
-    .file-name-row .fchev { font-size: 0.55rem; transition: transform 0.15s; color: #555; width: 14px; text-align: center; flex-shrink: 0; }
-    .file-name-row .fchev.open { transform: rotate(90deg); }
+    .resize-handle:hover, .resize-handle.dragging { background: #0d6efd; }
+    .resize-handle::after { content:''; position:absolute; top:0; bottom:0; left:-3px; right:-3px; }
 
-    /* Done checkbox */
-    .done-check { flex-shrink: 0; cursor: pointer; accent-color: #198754; }
-
-    /* Version sub-rows */
-    .ver-block { display: none; background: #14171a; padding: 0; }
-    .ver-block.open { display: block; }
-    .ver-row {
-        padding: 3px 12px 3px 34px; display: flex; align-items: center; gap: 0;
-        font-size: 0.73rem; color: #888; border-bottom: 1px solid #111; cursor: pointer;
+    /* ================================================================
+       Sidebar Sections
+       ================================================================ */
+    .sidebar-section {
+        display: flex; flex-direction: column; overflow: hidden;
     }
-    .ver-row:hover { background: rgba(255,255,255,0.025); color: #bbb; }
-    .ver-row .vr-check { width: 22px; flex-shrink: 0; text-align: center; }
-    .ver-row .vr-check input { cursor: pointer; }
-    .ver-row .vr-source { width: 105px; flex-shrink: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .ver-row .vr-size { width: 62px; flex-shrink: 0; text-align: right; padding-right: 6px; }
-    .ver-row .vr-lines { width: 48px; flex-shrink: 0; text-align: right; padding-right: 6px; }
-    .ver-row .vr-date { width: 130px; flex-shrink: 0; font-family: 'Cascadia Code','Consolas',monospace; }
-    .ver-row .vr-hash { flex-shrink: 0; font-family: 'Cascadia Code','Consolas',monospace; color: #444; font-size: 0.7rem; }
+    .sidebar-section.expanded { flex: 1; min-height: 0; }
+    .sidebar-section.collapsed-section > .section-body { display: none; }
 
-    /* Highlight badges for largest / latest */
-    .hl-largest { background: rgba(13,202,240,0.15); border: 1px solid rgba(13,202,240,0.4); border-radius: 3px; padding: 0 3px; color: #0dcaf0; }
-    .hl-latest  { background: rgba(255,193,7,0.15);  border: 1px solid rgba(255,193,7,0.4);  border-radius: 3px; padding: 0 3px; color: #ffc107; }
-    .hl-most-lines { background: rgba(25,135,84,0.15); border: 1px solid rgba(25,135,84,0.4); border-radius: 3px; padding: 0 3px; color: #198754; }
+    .section-header {
+        display: flex; align-items: center; gap: 6px;
+        padding: 4px 10px; background: #1e2228; border-bottom: 1px solid #2d2d2d;
+        cursor: pointer; user-select: none; font-size: 0.72rem;
+        font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: #999;
+    }
+    .section-header:hover { background: #252a32; color: #ccc; }
+    .section-header .shev { font-size: 0.55rem; transition: transform 0.15s; width: 10px; text-align: center; }
+    .section-header:not(.collapsed-hdr) .shev { transform: rotate(90deg); }
+    .section-header .section-badge {
+        margin-left: auto; font-size: 0.6rem; padding: 0 5px; border-radius: 8px;
+        background: #333; color: #888; font-weight: 400;
+    }
+    .section-header .section-badge.warn { background: rgba(255,193,7,0.2); color: #ffc107; }
 
-    /* Detail panel placeholder */
-    .detail-empty { display: flex; align-items: center; justify-content: center; height: 100%; color: #555; }
-    .tree-loading { display: flex; align-items: center; justify-content: center; height: 200px; color: #555; }
+    .section-body { overflow-y: auto; flex: 1; }
+
+    /* ================================================================
+       File Tree (IDE style)
+       ================================================================ */
+    .tree-row {
+        display: flex; align-items: center; height: 22px;
+        cursor: pointer; padding-right: 8px; position: relative;
+        font-size: 0.78rem; color: #ccc; white-space: nowrap;
+    }
+    .tree-row:hover { background: rgba(255,255,255,0.04); }
+    .tree-row.active { background: rgba(13,110,253,0.18); }
+    .tree-row.active::before {
+        content: ''; position: absolute; left: 0; top: 0; bottom: 0;
+        width: 2px; background: #0d6efd;
+    }
+
+    /* Indentation guides */
+    .tree-indent { display: inline-flex; flex-shrink: 0; }
+    .tree-indent-unit {
+        width: 18px; height: 22px; flex-shrink: 0; position: relative;
+    }
+    .tree-indent-unit.guide::before {
+        content: ''; position: absolute; left: 9px; top: 0; bottom: 0;
+        width: 1px; background: #2d2d2d;
+    }
+
+    /* Chevron */
+    .tree-chev {
+        width: 18px; height: 22px; flex-shrink: 0;
+        display: flex; align-items: center; justify-content: center;
+        color: #666; font-size: 0.5rem; transition: transform 0.1s;
+    }
+    .tree-chev.open { transform: rotate(90deg); }
+    .tree-chev.empty { visibility: hidden; }
+
+    /* File/folder icons */
+    .tree-icon {
+        width: 18px; height: 22px; flex-shrink: 0;
+        display: flex; align-items: center; justify-content: center;
+        font-size: 0.72rem;
+    }
+    .tree-icon.dir { color: #e8ab53; }
+    .tree-icon.file-py { color: #4584b6; }
+    .tree-icon.file-js { color: #f7df1e; }
+    .tree-icon.file-ts { color: #3178c6; }
+    .tree-icon.file-html { color: #e44d26; }
+    .tree-icon.file-css { color: #1572b6; }
+    .tree-icon.file-json { color: #a8b065; }
+    .tree-icon.file-md { color: #519aba; }
+    .tree-icon.file-sh { color: #89e051; }
+    .tree-icon.file-sql { color: #e38c00; }
+    .tree-icon.file-default { color: #888; }
+
+    /* File name */
+    .tree-name {
+        flex: 1; overflow: hidden; text-overflow: ellipsis;
+        font-family: 'Cascadia Code','Consolas','Monaco',monospace;
+        font-size: 0.76rem; padding-left: 2px;
+    }
+    .tree-name.dir-name { color: #ccc; }
+    .tree-name.dimmed { color: #555; }
+
+    /* Status badges in tree */
+    .tree-status {
+        flex-shrink: 0; font-size: 0.6rem; font-weight: 700;
+        width: 16px; height: 16px; border-radius: 3px;
+        display: flex; align-items: center; justify-content: center;
+        margin-left: auto;
+    }
+    .tree-status.st-M { color: #e8ab53; }
+    .tree-status.st-A { color: #73c991; }
+    .tree-status.st-D { color: #f85149; }
+    .tree-status.st-C { background: rgba(255,193,7,0.2); color: #ffc107; border-radius: 3px; }
+    .tree-status.st-R { color: #58a6ff; }
+
+    /* Folder file count */
+    .tree-count {
+        flex-shrink: 0; font-size: 0.6rem; color: #555;
+        margin-left: auto; padding-right: 2px;
+    }
+
+    /* Dir children container */
+    .tree-children { display: none; }
+    .tree-children.open { display: block; }
+
+    /* ================================================================
+       Session Cards in Sidebar
+       ================================================================ */
+    .session-card {
+        display: flex; align-items: center; gap: 6px;
+        padding: 5px 10px; cursor: pointer; font-size: 0.74rem;
+        border-bottom: 1px solid #222; color: #999;
+    }
+    .session-card:hover { background: rgba(255,255,255,0.03); }
+    .session-card.active { background: rgba(13,110,253,0.12); color: #ccc; }
+    .session-card .sc-dot {
+        width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+    }
+    .session-card .sc-dot.completed { background: #ffc107; }
+    .session-card .sc-dot.review { background: #a855f7; }
+    .session-card .sc-dot.merged { background: #22c55e; }
+    .session-card .sc-dot.running { background: #06b6d4; }
+    .session-card .sc-task {
+        flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .session-card .sc-count {
+        flex-shrink: 0; font-size: 0.6rem; color: #666;
+        background: #252a32; padding: 1px 5px; border-radius: 8px;
+    }
+
+    /* ================================================================
+       Toolbar / Status Bar
+       ================================================================ */
+    .ide-toolbar {
+        display: flex; align-items: center; gap: 8px;
+        padding: 0 12px; height: 30px; background: #181b20;
+        border-bottom: 1px solid #2d2d2d; font-size: 0.74rem; flex-shrink: 0;
+    }
+    .ide-statusbar {
+        display: flex; align-items: center; gap: 12px;
+        padding: 0 12px; height: 22px; background: #181b20;
+        border-top: 1px solid #2d2d2d; font-size: 0.68rem; color: #666; flex-shrink: 0;
+    }
+
+    /* Sidebar toggle */
+    .sidebar-toggle-btn {
+        position: absolute; left: 4px; top: 4px; z-index: 30;
+        width: 20px; height: 20px; border-radius: 3px;
+        border: 1px solid #333; background: #22262c; color: #666;
+        cursor: pointer; display: flex; align-items: center; justify-content: center;
+        font-size: 0.6rem; transition: all 0.15s; display: none;
+    }
+    .ide-sidebar.collapsed ~ .resize-handle + .ide-detail .sidebar-toggle-btn { display: flex; }
+
+    /* ================================================================
+       Filter Bar
+       ================================================================ */
+    .filter-strip {
+        display: flex; align-items: center; gap: 4px;
+        padding: 4px 8px; border-bottom: 1px solid #2d2d2d;
+        background: #1a1e24;
+    }
+    .filter-strip input[type="text"] {
+        flex: 1; background: #252a32; border: 1px solid #333; border-radius: 3px;
+        color: #ccc; font-size: 0.74rem; padding: 2px 8px; outline: none;
+        height: 22px;
+    }
+    .filter-strip input[type="text"]:focus { border-color: #0d6efd; }
+
+    .filter-pills {
+        display: flex; align-items: center; gap: 2px;
+        padding: 3px 8px; border-bottom: 1px solid #2d2d2d;
+        background: #1a1e24; flex-wrap: wrap;
+    }
+    .fpill {
+        font-size: 0.64rem; padding: 1px 7px; border-radius: 10px;
+        cursor: pointer; border: 1px solid transparent;
+        background: transparent; color: #666; transition: all 0.1s;
+    }
+    .fpill:hover { color: #999; }
+    .fpill.active { border-color: currentColor; }
+    .fpill.f-conflict.active { color: #ffc107; background: rgba(255,193,7,0.1); }
+    .fpill.f-unique.active { color: #73c991; background: rgba(115,201,145,0.1); }
+    .fpill.f-identical.active { color: #58a6ff; background: rgba(88,166,255,0.1); }
+    .fpill.f-unresolved.active { color: #f85149; background: rgba(248,81,73,0.1); }
+
+    .fpill .fpill-count { font-weight: 600; }
+
+    /* ================================================================
+       Detail Panel
+       ================================================================ */
+    .detail-empty {
+        display: flex; align-items: center; justify-content: center;
+        height: 100%; color: #444; font-size: 0.85rem;
+    }
+    .detail-empty .hint { font-size: 0.72rem; color: #333; margin-top: 8px; }
+
+    /* ================================================================
+       Utility
+       ================================================================ */
+    .tree-loading { padding: 20px; text-align: center; color: #555; font-size: 0.78rem; }
 </style>
 {% endblock %}
 
+{% block container_class %}{% endblock %}
+
 {% block content %}
-<!-- Top bar -->
-<div class="d-flex align-items-center justify-content-between mb-0 px-1" style="height: 34px;">
-    <span class="text-muted" style="font-size:0.85rem;">File Browser</span>
-    <div class="d-flex gap-3 align-items-center" id="statsBar" style="font-size: 0.78rem;">
-        <span class="text-muted">Loading...</span>
-    </div>
-    <div class="d-flex gap-2">
+<!-- Toolbar -->
+<div class="ide-toolbar">
+    <button class="btn btn-sm py-0 px-1" style="font-size:0.68rem; background:#252a32; color:#888; border:1px solid #333;" onclick="toggleSidebar()" title="Toggle sidebar (Ctrl+B)" id="toggleBtn">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M0 2.5A.5.5 0 0 1 .5 2H2a.5.5 0 0 1 0 1H.5a.5.5 0 0 1-.5-.5zm4 0A.5.5 0 0 1 4.5 2h11a.5.5 0 0 1 0 1h-11A.5.5 0 0 1 4 2.5zm0 4A.5.5 0 0 1 4.5 6h11a.5.5 0 0 1 0 1h-11A.5.5 0 0 1 4 6.5zm0 4A.5.5 0 0 1 4.5 10h11a.5.5 0 0 1 0 1h-11a.5.5 0 0 1-.5-.5zM0 6.5A.5.5 0 0 1 .5 6H2a.5.5 0 0 1 0 1H.5A.5.5 0 0 1 0 6.5zm0 4A.5.5 0 0 1 .5 10H2a.5.5 0 0 1 0 1H.5a.5.5 0 0 1-.5-.5z"/></svg>
+    </button>
+    <span class="text-muted" style="font-size:0.72rem;" id="statsBar">Loading...</span>
+    <div style="margin-left:auto; display:flex; gap:4px; align-items:center;">
+        {% if agent_session_id %}
+        <button class="btn btn-sm py-0" id="mergeRepoBtn"
+                style="font-size:0.65rem; background:#252a32; color:#73c991; border:1px solid #2d5a3e;"
+                onclick="mergeToRepo('resolved')">Merge Resolved to Repo</button>
+        <button class="btn btn-sm py-0" id="acceptMergeBtn"
+                style="font-size:0.65rem; background:#1a5c2e; color:#fff; border:1px solid #22c55e;"
+                onclick="acceptAllAndMerge()">Accept All &amp; Merge</button>
+        {% else %}
         <form method="POST" action="/execute" style="display:inline;">
             <input type="hidden" name="mode" value="auto">
-            <button type="submit" class="btn btn-sm btn-outline-secondary py-0" style="font-size:0.75rem;"
-                    onclick="return confirm('Copy only unique + identical files to target? (no conflicts)')">
-                Auto-Merge Only
-            </button>
+            <button type="submit" class="btn btn-sm py-0" style="font-size:0.65rem; background:#252a32; color:#888; border:1px solid #333;"
+                    onclick="return confirm('Copy only unique + identical files to target?')">Auto-Merge</button>
         </form>
         <form method="POST" action="/execute" style="display:inline;">
             <input type="hidden" name="mode" value="all">
-            <button type="submit" class="btn btn-sm btn-primary py-0" style="font-size:0.75rem;"
-                    onclick="return confirm('Copy all files to target?\n\n- Unique files\n- Identical files\n- Resolved conflicts\n\nUnresolved conflicts will be skipped.')">
-                Execute Merge
-            </button>
+            <button type="submit" class="btn btn-sm btn-primary py-0" style="font-size:0.65rem;"
+                    onclick="return confirm('Execute merge to target?\nUnresolved conflicts will be skipped.')">Merge All</button>
         </form>
+        {% endif %}
     </div>
 </div>
 
-<div class="browse-layout">
-    <!-- ========== LEFT SIDEBAR ========== -->
-    <div class="browse-sidebar" id="sidebar">
-        <div class="filter-bar">
-            <input type="text" class="form-control form-control-sm mb-1" id="searchInput"
-                   placeholder="Search files..." style="font-size: 0.8rem;">
-            <div class="d-flex flex-wrap align-items-center">
-                <label class="text-warning"><input type="checkbox" id="fC" checked> Conflicts (<span id="cntConflict">0</span>)</label>
-                <label class="text-success"><input type="checkbox" id="fU" checked> Unique (<span id="cntUnique">0</span>)</label>
-                <label class="text-info"><input type="checkbox" id="fI" checked> Identical (<span id="cntIdentical">0</span>)</label>
-                <button class="btn btn-sm btn-outline-success ms-auto py-0" style="font-size:0.72rem;" onclick="acceptAllDefaults()" title="Mark all unresolved conflicts as resolved with their current default selection">Accept All Defaults</button>
+<div class="ide-layout" style="position:relative;">
+    <!-- ========== SIDEBAR ========== -->
+    <div class="ide-sidebar" id="sidebar">
+        <!-- SESSION SECTION -->
+        <div class="sidebar-section" id="sessionSection">
+            <div class="section-header" onclick="toggleSection('session')">
+                <span class="shev">&#9654;</span>
+                AGENT SESSIONS
+                <span class="section-badge" id="sessionBadge">0</span>
+            </div>
+            <div class="section-body" id="sessionBody" style="max-height:180px;">
+                <div class="session-card active" data-sid="all" onclick="selectSession('all',this)">
+                    <span class="sc-dot" style="background:#888;"></span>
+                    <span class="sc-task" style="color:#ccc;">All Changes</span>
+                </div>
+                <div id="sessionList"></div>
             </div>
         </div>
 
-        <div id="treeContainer">
-            <div class="tree-loading">Loading file tree...</div>
+        <!-- FILES SECTION -->
+        <div class="sidebar-section expanded" id="filesSection">
+            <div class="section-header" onclick="toggleSection('files')">
+                <span class="shev">&#9654;</span>
+                EXPLORER
+                <span class="section-badge" id="filesBadge">0</span>
+            </div>
+            <div class="section-body" style="display:flex; flex-direction:column; overflow:hidden;">
+                <!-- Tab row -->
+                <div style="display:flex; border-bottom:1px solid #2d2d2d; flex-shrink:0;">
+                    <button class="btn btn-sm rounded-0 flex-fill py-0" style="font-size:0.68rem; border:none; border-bottom:2px solid #0d6efd; color:#ccc; background:transparent; height:24px;" id="tabChanges" onclick="switchTab('changes')">Changes</button>
+                    <button class="btn btn-sm rounded-0 flex-fill py-0" style="font-size:0.68rem; border:none; border-bottom:2px solid transparent; color:#555; background:transparent; height:24px;" id="tabRepo" onclick="switchTab('repo')">All Files</button>
+                </div>
+
+                <!-- Filter strip (changes tab) -->
+                <div id="changesFilters">
+                    <div class="filter-strip">
+                        <input type="text" id="searchInput" placeholder="Filter (Ctrl+P)">
+                    </div>
+                    <div class="filter-pills">
+                        <span class="fpill f-conflict active" data-cat="conflict" onclick="toggleFilter(this)">Conflicts <span class="fpill-count" id="cntConflict">0</span></span>
+                        <span class="fpill f-unique active" data-cat="unique" onclick="toggleFilter(this)">Unique <span class="fpill-count" id="cntUnique">0</span></span>
+                        <span class="fpill f-identical active" data-cat="identical" onclick="toggleFilter(this)">Same <span class="fpill-count" id="cntIdentical">0</span></span>
+                        <span class="fpill f-unresolved" data-cat="unresolved" onclick="toggleFilter(this)">Unresolved</span>
+                        <button class="btn btn-sm py-0 ms-auto" style="font-size:0.58rem; color:#73c991; background:transparent; border:1px solid #333; padding:0 6px; line-height:16px;" onclick="acceptAllDefaults()">Accept All</button>
+                    </div>
+                </div>
+
+                <!-- Filter strip (repo tab) -->
+                <div id="repoFilters" style="display:none;">
+                    <div class="filter-strip">
+                        <input type="text" id="repoSearchInput" placeholder="Filter repo files...">
+                    </div>
+                </div>
+
+                <!-- Tree container -->
+                <div style="overflow-y:auto; flex:1; min-height:0;">
+                    <div id="treeContainer">
+                        <div class="tree-loading">Loading...</div>
+                    </div>
+                    <div id="repoTreeContainer" style="display:none;"></div>
+                </div>
+            </div>
         </div>
     </div>
 
-    <!-- ========== RIGHT DETAIL ========== -->
-    <div class="browse-detail" id="detailPanel">
+    <!-- Resize handle -->
+    <div class="resize-handle" id="resizeHandle"></div>
+
+    <!-- ========== DETAIL PANEL ========== -->
+    <div class="ide-detail" id="detailPanel">
         <div class="detail-empty">
             <div class="text-center">
-                <div style="font-size:3rem;opacity:0.25;">&#128196;</div>
-                <p>Click a file to view diff &amp; details</p>
-                <p class="small" style="opacity:0.4;">&uarr;&darr; navigate &middot; Ctrl+&uarr;&darr; jump diffs &middot; / search &middot; Enter full view</p>
+                <div style="font-size:2rem;opacity:0.15;">&#128196;</div>
+                <p>Select a file to view</p>
+                <div class="hint">&#8593;&#8595; navigate &middot; Ctrl+&#8593;&#8595; jump diffs &middot; / search &middot; Enter expand</div>
             </div>
         </div>
     </div>
 </div>
 
+<!-- Status bar -->
+<div class="ide-statusbar">
+    <span id="sbFile" style="flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"></span>
+    <span id="sbSession" style="color:#555;"></span>
+    <span id="sbStats"></span>
+</div>
 {% endblock %}
 
 {% block extra_js %}
 <script>
-let TREE = {};
-let STATS = {};
-let currentItem = null;
-let currentHunkIdx = -1;
+/* ================================================================
+   STATE
+   ================================================================ */
+let TREE = {}, STATS = {}, REPO_TREE = {};
+let currentItem = null, currentHunkIdx = -1;
 let allFileElements = [];
+let unresolvedMap = {}, fileDataMap = {};
+let activeTab = 'changes', repoTreeLoaded = false;
+let agentSessions = [], selectedSession = 'all';
 
-/*
- * ========================================================================
- * UNRESOLVED COUNTS — tracked in JS data, NOT the DOM
- *
- * unresolvedMap[dirPath] = number of unresolved conflicts under that dir
- * fileDataMap[filePath]  = reference to the file's data object in TREE
- * ========================================================================
- */
-let unresolvedMap = {};   // "src/components" -> 3
-let fileDataMap = {};     // "src/components/App.tsx" -> {_type:'file', ...}
+/* ================================================================
+   FILE TYPE ICONS (SVG paths kept minimal)
+   ================================================================ */
+const FILE_ICONS = {
+    py: {cls:'file-py', ch:'\u{1F40D}'}, // or use a simpler char
+    js: {cls:'file-js', ch:'JS'},
+    ts: {cls:'file-ts', ch:'TS'},
+    tsx: {cls:'file-ts', ch:'TX'},
+    jsx: {cls:'file-js', ch:'JX'},
+    html: {cls:'file-html', ch:'\u25C7'},
+    htm: {cls:'file-html', ch:'\u25C7'},
+    css: {cls:'file-css', ch:'#'},
+    scss: {cls:'file-css', ch:'#'},
+    json: {cls:'file-json', ch:'{}'},
+    md: {cls:'file-md', ch:'M'},
+    sh: {cls:'file-sh', ch:'>_'},
+    bash: {cls:'file-sh', ch:'>_'},
+    sql: {cls:'file-sql', ch:'Q'},
+    txt: {cls:'file-default', ch:'\u2261'},
+};
+function getFileIcon(name) {
+    const ext = (name.split('.').pop() || '').toLowerCase();
+    return FILE_ICONS[ext] || {cls:'file-default', ch:'\u25A1'};
+}
 
-/** Build unresolvedMap and fileDataMap from TREE. Called once after load. */
+/* ================================================================
+   TREE DATA HELPERS
+   ================================================================ */
 function buildCountMaps(node, pathPrefix) {
     for (const [name, val] of Object.entries(node)) {
         const fullPath = pathPrefix ? pathPrefix + '/' + name : name;
@@ -162,70 +413,25 @@ function computeUnresolved(node) {
     return c;
 }
 
-/** Mark a single file as resolved/unresolved in the TREE data + update all folder badges. */
 function markFileResolved(filePath, resolved) {
     const fd = fileDataMap[filePath];
     if (fd) fd.resolved = resolved;
-
-    // Update STATS
     const delta = resolved ? 1 : -1;
     STATS.resolved = Math.max(0, (STATS.resolved || 0) + delta);
     renderStats();
-
-    // Update the dir-wrapper badges by walking all ancestors of this path
-    const parts = filePath.split('/');
-    for (let i = 1; i < parts.length; i++) {
-        const dirPath = parts.slice(0, i).join('/');
-        const wrapper = document.querySelector(`.dir-wrapper[data-path="${CSS.escape(dirPath)}"]`);
-        if (wrapper) updateDirBadge(wrapper);
-    }
 }
 
-/** Bulk-mark many files resolved in the TREE data, then refresh all visible folder badges. */
 function markManyResolved(filePaths) {
     let count = 0;
     for (const fp of filePaths) {
         const fd = fileDataMap[fp];
-        if (fd && !fd.resolved) {
-            fd.resolved = true;
-            count++;
-        }
+        if (fd && !fd.resolved) { fd.resolved = true; count++; }
     }
     STATS.resolved = Math.min((STATS.resolved || 0) + count, STATS.conflicts || 0);
     renderStats();
-    // Refresh all rendered dir badges
-    document.querySelectorAll('.dir-wrapper[data-path]').forEach(w => updateDirBadge(w));
     return count;
 }
 
-/** Recompute a single dir-wrapper's badge from the TREE data. */
-function updateDirBadge(wrapper) {
-    const dirPath = wrapper.dataset.path;
-    const badge = wrapper.querySelector(':scope > .dir-row .dir-conflict-badge');
-    const acceptBtn = wrapper.querySelector(':scope > .dir-row .dir-accept-btn');
-    if (!badge) return;
-
-    // Walk the TREE to find this dir node and count unresolved
-    const dirNode = getTreeNode(dirPath);
-    if (!dirNode) return;
-
-    const total = parseInt(badge.dataset.total || '0');
-    const unresolved = computeUnresolved(dirNode);
-    badge.dataset.unresolved = unresolved;
-
-    if (unresolved > 0) {
-        badge.className = 'dir-conflict-badge badge bg-warning text-dark';
-        badge.style.cssText = 'font-size:0.55rem;';
-        badge.textContent = unresolved;
-    } else if (total > 0) {
-        badge.className = 'dir-conflict-badge badge bg-success';
-        badge.style.cssText = 'font-size:0.55rem;';
-        badge.textContent = '\u2713 ' + total;
-    }
-    if (acceptBtn) acceptBtn.style.display = unresolved > 0 ? '' : 'none';
-}
-
-/** Navigate into TREE by a slash-separated path like "src/components". */
 function getTreeNode(path) {
     const parts = path.split('/');
     let node = TREE;
@@ -237,7 +443,25 @@ function getTreeNode(path) {
     return node;
 }
 
-/* ======== LOAD TREE DATA ======== */
+function countCategory(node, cat) {
+    let c = 0;
+    for (const val of Object.values(node)) {
+        if (val._type === 'file' && val.category === cat) c++;
+        else if (val._type === 'dir') c += countCategory(val.children, cat);
+    }
+    return c;
+}
+
+function collectUnresolvedPaths(node, paths) {
+    for (const val of Object.values(node)) {
+        if (val._type === 'file' && val.category === 'conflict' && !val.resolved) paths.push(val.relative_path);
+        else if (val._type === 'dir') collectUnresolvedPaths(val.children, paths);
+    }
+}
+
+/* ================================================================
+   LOAD & RENDER TREE
+   ================================================================ */
 function loadTree() {
     fetch('/api/browse-tree')
         .then(r => r.json())
@@ -251,46 +475,42 @@ function loadTree() {
         })
         .catch(err => {
             document.getElementById('treeContainer').innerHTML =
-                '<div class="text-danger p-3">Failed to load: ' + err + '</div>';
+                '<div class="text-danger p-3">Failed: ' + err + '</div>';
         });
 }
 
 function renderStats() {
     const s = STATS;
     const unresolved = (s.conflicts||0) - (s.resolved||0);
-    document.getElementById('statsBar').innerHTML = `
-        ${unresolved > 0
-            ? `<span class="text-warning fw-bold">${unresolved} unresolved</span>`
-            : `<span class="text-success fw-bold">\u2713 All resolved</span>`}
-        <span class="text-primary">${s.resolved||0}/${s.conflicts||0} resolved</span>
-        <span class="text-success">${s.auto_unique||0} unique</span>
-        <span class="text-info">${s.auto_identical||0} identical</span>
-        <span class="text-muted">${s.total||0} total</span>
-    `;
+    document.getElementById('statsBar').innerHTML =
+        (unresolved > 0
+            ? '<span style="color:#ffc107;font-weight:600;">' + unresolved + ' unresolved</span>'
+            : '<span style="color:#73c991;font-weight:600;">\u2713 All resolved</span>') +
+        ' &middot; <span style="color:#58a6ff;">' + (s.resolved||0) + '/' + (s.conflicts||0) + '</span>' +
+        ' &middot; <span style="color:#73c991;">' + (s.auto_unique||0) + ' unique</span>' +
+        ' &middot; <span style="color:#555;">' + (s.total||0) + ' total</span>';
+
     document.getElementById('cntConflict').textContent = countCategory(TREE, 'conflict');
     document.getElementById('cntUnique').textContent = countCategory(TREE, 'unique');
     document.getElementById('cntIdentical').textContent = countCategory(TREE, 'identical');
+    document.getElementById('filesBadge').textContent = s.total || 0;
+
+    // Status bar
+    const sb = document.getElementById('sbStats');
+    if (sb) sb.innerHTML = unresolved > 0
+        ? '<span style="color:#ffc107;">' + unresolved + ' need review</span>'
+        : '<span style="color:#73c991;">All resolved</span>';
 }
 
-function countCategory(node, cat) {
-    let c = 0;
-    for (const val of Object.values(node)) {
-        if (val._type === 'file' && val.category === cat) c++;
-        else if (val._type === 'dir') c += countCategory(val.children, cat);
-    }
-    return c;
-}
-
-/* ======== RENDER TREE ======== */
 function renderTree() {
     const container = document.getElementById('treeContainer');
     container.innerHTML = '';
     allFileElements = [];
-    renderNode(TREE, container, 0, '');
+    renderNode(TREE, container, 0, '', []);
     applyFilters();
 }
 
-function renderNode(node, parentEl, depth, pathPrefix) {
+function renderNode(node, parentEl, depth, pathPrefix, guideFlags) {
     const entries = Object.entries(node).sort((a, b) => {
         const aDir = a[1]._type === 'dir' ? 0 : 1;
         const bDir = b[1]._type === 'dir' ? 0 : 1;
@@ -299,89 +519,77 @@ function renderNode(node, parentEl, depth, pathPrefix) {
     });
     for (const [name, val] of entries) {
         const fullPath = pathPrefix ? pathPrefix + '/' + name : name;
-        if (val._type === 'dir') renderDir(name, val, parentEl, depth, fullPath);
-        else if (val._type === 'file') renderFile(name, val, parentEl, depth);
+        if (val._type === 'dir') renderDir(name, val, parentEl, depth, fullPath, guideFlags);
+        else if (val._type === 'file') renderFile(name, val, parentEl, depth, guideFlags);
     }
 }
 
-function renderDir(name, dirData, parentEl, depth, fullPath) {
+/* ----------------------------------------------------------------
+   Directory row
+   ---------------------------------------------------------------- */
+function renderDir(name, dirData, parentEl, depth, fullPath, guideFlags) {
     const wrapper = document.createElement('div');
     wrapper.className = 'dir-wrapper';
     wrapper.dataset.path = fullPath;
 
     const row = document.createElement('div');
-    row.className = 'dir-row';
-    row.style.paddingLeft = (8 + depth * 18) + 'px';
+    row.className = 'tree-row';
 
+    // Indent guides
+    const indent = makeIndent(depth, guideFlags);
+    row.appendChild(indent);
+
+    // Chevron
     const chev = document.createElement('span');
-    chev.className = 'dir-chev';
+    chev.className = 'tree-chev';
     chev.innerHTML = '&#9654;';
+    row.appendChild(chev);
 
+    // Icon
     const icon = document.createElement('span');
-    icon.style.color = '#ffc107';
-    icon.innerHTML = '&#128193;';
+    icon.className = 'tree-icon dir';
+    icon.textContent = '\uD83D\uDCC1';
+    row.appendChild(icon);
 
+    // Name
     const nameSpan = document.createElement('span');
-    nameSpan.className = 'text-warning fw-bold';
-    nameSpan.textContent = name + '/';
+    nameSpan.className = 'tree-name dir-name';
+    nameSpan.textContent = name;
+    row.appendChild(nameSpan);
 
-    const info = document.createElement('span');
-    info.className = 'ms-auto d-flex align-items-center gap-2';
-    info.style.cssText = 'font-size:0.72rem;color:#666;';
-
-    // Accept button (only if dir has any conflicts)
-    if (dirData.conflict_count > 0) {
-        const acceptBtn = document.createElement('button');
-        acceptBtn.className = 'btn btn-sm btn-outline-success py-0 px-1 dir-accept-btn';
-        acceptBtn.style.cssText = 'font-size:0.6rem;line-height:1.3;';
-        acceptBtn.textContent = 'Accept';
-        acceptBtn.title = 'Accept defaults for all conflicts in ' + name + '/';
-        acceptBtn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            acceptDefaultsForFolder(fullPath, wrapper);
-        });
-        // Hide if already all resolved
-        const initUnresolved = computeUnresolved(dirData.children);
-        if (initUnresolved === 0) acceptBtn.style.display = 'none';
-        info.appendChild(acceptBtn);
-    }
-
-    const countSpan = document.createElement('span');
-    countSpan.className = 'dir-file-count';
-    countSpan.textContent = dirData.file_count;
-    info.appendChild(countSpan);
-
-    // Conflict badge — computed from TREE data, not DOM
+    // Unresolved count
     const unresolvedCount = computeUnresolved(dirData.children);
-    const conflictBadge = document.createElement('span');
-    conflictBadge.className = 'dir-conflict-badge';
-    conflictBadge.dataset.total = dirData.conflict_count;
-    conflictBadge.dataset.unresolved = unresolvedCount;
-    if (dirData.conflict_count === 0) {
-        conflictBadge.style.display = 'none';
-    } else if (unresolvedCount > 0) {
-        conflictBadge.className = 'dir-conflict-badge badge bg-warning text-dark';
-        conflictBadge.style.cssText = 'font-size:0.55rem;';
-        conflictBadge.textContent = unresolvedCount;
-    } else {
-        conflictBadge.className = 'dir-conflict-badge badge bg-success';
-        conflictBadge.style.cssText = 'font-size:0.55rem;';
-        conflictBadge.textContent = '\u2713 ' + dirData.conflict_count;
+    if (dirData.conflict_count > 0) {
+        const badge = document.createElement('span');
+        badge.className = 'tree-status st-C dir-conflict-badge';
+        badge.dataset.total = dirData.conflict_count;
+        badge.dataset.unresolved = unresolvedCount;
+        if (unresolvedCount > 0) {
+            badge.textContent = unresolvedCount;
+        } else {
+            badge.textContent = '\u2713';
+            badge.className = 'tree-status st-R dir-conflict-badge';
+        }
+        row.appendChild(badge);
     }
-    info.appendChild(conflictBadge);
 
-    row.append(chev, icon, nameSpan, info);
+    // File count
+    const count = document.createElement('span');
+    count.className = 'tree-count';
+    count.textContent = dirData.file_count;
+    row.appendChild(count);
 
     const childrenDiv = document.createElement('div');
-    childrenDiv.className = 'dir-children';
+    childrenDiv.className = 'tree-children';
 
     let populated = false;
     row.addEventListener('click', () => {
         const isOpen = childrenDiv.classList.contains('open');
         if (!isOpen && !populated) {
-            renderNode(dirData.children, childrenDiv, depth + 1, fullPath);
+            const newGuides = guideFlags.concat([true]);
+            renderNode(dirData.children, childrenDiv, depth + 1, fullPath, newGuides);
             populated = true;
-            applyFilters(); // apply current filters to newly rendered items
+            applyFilters();
         }
         childrenDiv.classList.toggle('open');
         chev.classList.toggle('open');
@@ -391,7 +599,10 @@ function renderDir(name, dirData, parentEl, depth, fullPath) {
     parentEl.appendChild(wrapper);
 }
 
-function renderFile(name, fileData, parentEl, depth) {
+/* ----------------------------------------------------------------
+   File row
+   ---------------------------------------------------------------- */
+function renderFile(name, fileData, parentEl, depth, guideFlags) {
     const item = document.createElement('div');
     item.className = 'file-item';
     item.dataset.cat = fileData.category;
@@ -399,85 +610,398 @@ function renderFile(name, fileData, parentEl, depth) {
     item.dataset.path = fileData.relative_path;
     item.dataset.resolved = fileData.resolved ? '1' : '0';
 
-    const nameRow = document.createElement('div');
-    nameRow.className = 'file-name-row';
-    nameRow.style.paddingLeft = (8 + depth * 18) + 'px';
+    const row = document.createElement('div');
+    row.className = 'tree-row';
 
-    const fchev = document.createElement('span');
-    fchev.className = 'fchev';
-    fchev.innerHTML = '&#9654;';
-    fchev.addEventListener('click', (e) => {
-        e.stopPropagation();
-        fchev.classList.toggle('open');
-        item.querySelector('.ver-block').classList.toggle('open');
-    });
+    // Indent
+    row.appendChild(makeIndent(depth, guideFlags));
 
-    const doneCheck = document.createElement('input');
-    doneCheck.type = 'checkbox';
-    doneCheck.className = 'done-check';
-    doneCheck.checked = fileData.resolved;
-    doneCheck.title = fileData.resolved ? 'Confirmed — click to unconfirm' : 'Click to confirm this selection';
-    doneCheck.addEventListener('click', (e) => {
-        e.stopPropagation();
-        toggleDone(fileData.relative_path, doneCheck, item);
-    });
+    // No chevron for files — use empty spacer
+    const chev = document.createElement('span');
+    chev.className = 'tree-chev empty';
+    row.appendChild(chev);
 
-    const badge = document.createElement('span');
-    badge.style.cssText = 'font-size:0.55rem;width:44px;';
-    if (fileData.category === 'conflict') {
-        badge.className = 'badge ' + (fileData.resolved ? 'bg-primary' : 'bg-warning text-dark');
-        badge.textContent = fileData.resolved ? 'Done' : 'Review';
-    } else if (fileData.category === 'unique') {
-        badge.className = 'badge bg-success';
-        badge.textContent = 'Unique';
-    } else {
-        badge.className = 'badge bg-info';
-        badge.textContent = 'Same';
-    }
+    // File icon
+    const fi = getFileIcon(name);
+    const icon = document.createElement('span');
+    icon.className = 'tree-icon ' + fi.cls;
+    icon.textContent = fi.ch;
+    row.appendChild(icon);
 
+    // File name
     const fname = document.createElement('span');
-    fname.className = 'fname';
+    fname.className = 'tree-name';
     fname.title = fileData.relative_path;
     fname.textContent = name;
+    // Dim identical files
+    if (fileData.category === 'identical') fname.classList.add('dimmed');
+    row.appendChild(fname);
 
-    const vcount = document.createElement('span');
-    vcount.style.cssText = 'font-size:0.65rem;color:#555;';
-    vcount.textContent = fileData.num_versions + 'v';
+    // Status indicator
+    const status = document.createElement('span');
+    if (fileData.category === 'conflict') {
+        status.className = 'tree-status ' + (fileData.resolved ? 'st-R' : 'st-C');
+        status.textContent = fileData.resolved ? '\u2713' : 'C';
+        status.title = fileData.resolved ? 'Resolved' : 'Conflict — needs review';
+    } else if (fileData.category === 'unique') {
+        status.className = 'tree-status st-A';
+        status.textContent = 'U';
+        status.title = 'Unique file';
+    }
+    if (status.className) row.appendChild(status);
 
-    nameRow.append(fchev, doneCheck, badge, fname, vcount);
-    nameRow.addEventListener('click', () => {
+    row.addEventListener('click', () => {
         loadDetail(fileData.relative_path, item);
     });
 
-    const verBlock = document.createElement('div');
-    verBlock.className = 'ver-block';
-    verBlock.style.paddingLeft = (depth * 18) + 'px';
-
-    for (const v of fileData.versions) {
-        const vrow = document.createElement('div');
-        vrow.className = 'ver-row';
-        vrow.innerHTML = `
-            <span class="vr-check"><input type="radio" name="sel_${fileData.relative_path}" ${v.selected ? 'checked' : ''}></span>
-            <span class="vr-source">${escHtml(v.source_name)}</span>
-            <span class="vr-size ${v.is_largest ? 'hl-largest' : ''}">${escHtml(v.size)}</span>
-            <span class="vr-lines ${v.is_most_lines ? 'hl-most-lines' : ''}">${v.lines !== null ? v.lines : '-'}</span>
-            <span class="vr-date ${v.is_latest ? 'hl-latest' : ''}">${escHtml(v.modified)}</span>
-            <span class="vr-hash">${escHtml(v.sha_short)}</span>
-        `;
-        vrow.addEventListener('click', (e) => {
-            e.stopPropagation();
-            pickVer(fileData.relative_path, v.index, item);
-        });
-        vrow.querySelector('input[type=radio]').addEventListener('click', (e) => {
-            e.stopPropagation();
-            pickVer(fileData.relative_path, v.index, item);
-        });
-        verBlock.appendChild(vrow);
-    }
-
-    item.append(nameRow, verBlock);
+    item.appendChild(row);
     parentEl.appendChild(item);
     allFileElements.push(item);
+}
+
+/* ----------------------------------------------------------------
+   Indent helper — creates guide lines
+   ---------------------------------------------------------------- */
+function makeIndent(depth, guideFlags) {
+    const indent = document.createElement('span');
+    indent.className = 'tree-indent';
+    for (let i = 0; i < depth; i++) {
+        const unit = document.createElement('span');
+        unit.className = 'tree-indent-unit' + (guideFlags[i] ? ' guide' : '');
+        indent.appendChild(unit);
+    }
+    return indent;
+}
+
+/* ================================================================
+   UPDATE FILE IN DOM
+   ================================================================ */
+function updateFileItemDOM(itemEl, resolved) {
+    itemEl.dataset.resolved = resolved ? '1' : '0';
+    const st = itemEl.querySelector('.tree-status');
+    if (st && itemEl.dataset.cat === 'conflict') {
+        st.className = 'tree-status ' + (resolved ? 'st-R' : 'st-C');
+        st.textContent = resolved ? '\u2713' : 'C';
+        st.title = resolved ? 'Resolved' : 'Conflict — needs review';
+    }
+}
+
+/* ================================================================
+   ACTIONS
+   ================================================================ */
+function toggleDone(fp, itemEl) {
+    fetch('/resolve-toggle', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+        body: 'filepath=' + encodeURIComponent(fp)
+    })
+    .then(r => r.json())
+    .then(data => {
+        updateFileItemDOM(itemEl, data.resolved);
+        if (itemEl.dataset.cat === 'conflict') markFileResolved(fp, data.resolved);
+    });
+}
+
+function acceptAllDefaults() {
+    if (!confirm('Accept default selections for all unresolved conflicts?')) return;
+    fetch('/resolve-accept-defaults', { method: 'POST' })
+        .then(r => r.json())
+        .then(data => {
+            const paths = [];
+            collectUnresolvedPaths(TREE, paths);
+            markManyResolved(paths);
+            document.querySelectorAll('.file-item[data-cat="conflict"][data-resolved="0"]').forEach(el => {
+                updateFileItemDOM(el, true);
+            });
+            // Update dir badges
+            document.querySelectorAll('.dir-wrapper[data-path]').forEach(w => updateDirBadge(w));
+        });
+}
+
+function updateDirBadge(wrapper) {
+    const badge = wrapper.querySelector(':scope > .tree-row .dir-conflict-badge');
+    if (!badge) return;
+    const dirPath = wrapper.dataset.path;
+    const dirNode = getTreeNode(dirPath);
+    if (!dirNode) return;
+    const unresolved = computeUnresolved(dirNode);
+    badge.dataset.unresolved = unresolved;
+    if (unresolved > 0) {
+        badge.className = 'tree-status st-C dir-conflict-badge';
+        badge.textContent = unresolved;
+    } else {
+        badge.className = 'tree-status st-R dir-conflict-badge';
+        badge.textContent = '\u2713';
+    }
+}
+
+/* ================================================================
+   LOAD DETAIL PANEL
+   ================================================================ */
+function loadDetail(fp, el) {
+    // Deselect previous
+    document.querySelectorAll('.tree-row.active').forEach(r => r.classList.remove('active'));
+    if (el) {
+        const row = el.querySelector('.tree-row');
+        if (row) row.classList.add('active');
+    }
+    currentItem = el;
+
+    // Status bar file path
+    document.getElementById('sbFile').textContent = fp;
+
+    const panel = document.getElementById('detailPanel');
+    panel.innerHTML = '<div class="tree-loading">Loading...</div>';
+    fetch('/api/file-detail/' + fp)
+        .then(r => r.text())
+        .then(html => {
+            panel.innerHTML = html;
+            panel.querySelectorAll('script').forEach(s => {
+                const ns = document.createElement('script');
+                ns.textContent = s.textContent;
+                s.parentNode.replaceChild(ns, s);
+            });
+            currentHunkIdx = -1;
+            setTimeout(() => {
+                const d = panel.querySelector('.sbs-row-delete,.sbs-row-insert,.sbs-row-replace,.r-del,.r-ins,.r-rep');
+                if (d) d.scrollIntoView({block:'center', behavior:'smooth'});
+            }, 50);
+        })
+        .catch(err => { panel.innerHTML = '<div class="text-danger p-3">' + err + '</div>'; });
+}
+
+function pickVer(fp, idx, itemEl) {
+    fetch('/resolve', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+        body: 'filepath=' + encodeURIComponent(fp) + '&selected_index=' + idx + '&next_path='
+    }).then(() => {
+        const wasUnresolved = itemEl && itemEl.dataset.resolved === '0' && itemEl.dataset.cat === 'conflict';
+        if (itemEl) updateFileItemDOM(itemEl, true);
+        if (wasUnresolved) markFileResolved(fp, true);
+        if (currentItem === itemEl) loadDetail(fp, itemEl);
+    });
+}
+
+/* ================================================================
+   FILTERS
+   ================================================================ */
+const sI = document.getElementById('searchInput');
+const filterState = { conflict: true, unique: true, identical: true, unresolved: false };
+
+function toggleFilter(pill) {
+    const cat = pill.dataset.cat;
+    filterState[cat] = !filterState[cat];
+    pill.classList.toggle('active', filterState[cat]);
+    applyFilters();
+}
+
+function applyFilters() {
+    const s = sI.value.toLowerCase();
+    const showUnresolvedOnly = filterState.unresolved;
+
+    document.querySelectorAll('.file-item').forEach(el => {
+        const cat = el.dataset.cat;
+        const catOk = filterState[cat] || false;
+        const nameOk = !s || (el.dataset.name || '').includes(s) || (el.dataset.path || '').toLowerCase().includes(s);
+        const unresolvedOk = !showUnresolvedOnly || (cat === 'conflict' && el.dataset.resolved === '0');
+        el.style.display = (catOk && nameOk && unresolvedOk) ? '' : 'none';
+    });
+
+    // Hide empty dirs
+    document.querySelectorAll('.dir-wrapper').forEach(dw => {
+        const childContainer = dw.querySelector('.tree-children');
+        if (!childContainer) return;
+        const hasVisible = childContainer.querySelector('.file-item:not([style*="display: none"])') ||
+                          childContainer.querySelector('.dir-wrapper:not([style*="display: none"])');
+        dw.style.display = (hasVisible || !s) ? '' : 'none';
+    });
+
+    allFileElements = Array.from(document.querySelectorAll('.file-item')).filter(el => el.style.display !== 'none');
+}
+
+sI.addEventListener('input', applyFilters);
+
+/* ================================================================
+   SIDEBAR TABS
+   ================================================================ */
+function switchTab(tab) {
+    activeTab = tab;
+    const tC = document.getElementById('tabChanges');
+    const tR = document.getElementById('tabRepo');
+    if (tab === 'changes') {
+        tC.style.borderBottomColor = '#0d6efd'; tC.style.color = '#ccc';
+        tR.style.borderBottomColor = 'transparent'; tR.style.color = '#555';
+        document.getElementById('treeContainer').style.display = '';
+        document.getElementById('repoTreeContainer').style.display = 'none';
+        document.getElementById('changesFilters').style.display = '';
+        document.getElementById('repoFilters').style.display = 'none';
+    } else {
+        tR.style.borderBottomColor = '#0d6efd'; tR.style.color = '#ccc';
+        tC.style.borderBottomColor = 'transparent'; tC.style.color = '#555';
+        document.getElementById('treeContainer').style.display = 'none';
+        document.getElementById('repoTreeContainer').style.display = '';
+        document.getElementById('changesFilters').style.display = 'none';
+        document.getElementById('repoFilters').style.display = '';
+        if (!repoTreeLoaded) loadRepoTree();
+    }
+}
+
+/* ================================================================
+   REPO TREE (All Files tab)
+   ================================================================ */
+function loadRepoTree() {
+    const container = document.getElementById('repoTreeContainer');
+    container.innerHTML = '<div class="tree-loading">Loading...</div>';
+    fetch('/api/repo-tree')
+        .then(r => r.json())
+        .then(data => {
+            REPO_TREE = data.tree;
+            repoTreeLoaded = true;
+            container.innerHTML = '';
+            renderRepoNode(REPO_TREE, container, 0, []);
+            document.getElementById('repoSearchInput').addEventListener('input', function() {
+                const s = this.value.toLowerCase();
+                container.querySelectorAll('.repo-file').forEach(el => {
+                    el.style.display = (!s || el.dataset.path.toLowerCase().includes(s)) ? '' : 'none';
+                });
+                container.querySelectorAll('.repo-dir').forEach(dw => {
+                    if (!s) { dw.style.display = ''; return; }
+                    dw.style.display = dw.querySelector('.repo-file:not([style*="display: none"])') ? '' : 'none';
+                });
+            });
+        })
+        .catch(err => {
+            container.innerHTML = '<div class="text-danger p-3">' + err + '</div>';
+        });
+}
+
+function renderRepoNode(node, parent, depth, guideFlags) {
+    const entries = Object.entries(node).sort((a,b) => {
+        const aDir = a[1]._type === 'dir' ? 0 : 1;
+        const bDir = b[1]._type === 'dir' ? 0 : 1;
+        return aDir - bDir || a[0].localeCompare(b[0]);
+    });
+    for (const [name, val] of entries) {
+        if (val._type === 'dir') {
+            const wrap = document.createElement('div');
+            wrap.className = 'repo-dir';
+            const row = document.createElement('div');
+            row.className = 'tree-row';
+            row.appendChild(makeIndent(depth, guideFlags));
+            const chev = document.createElement('span');
+            chev.className = 'tree-chev';
+            chev.innerHTML = '&#9654;';
+            row.appendChild(chev);
+            const icon = document.createElement('span');
+            icon.className = 'tree-icon dir';
+            icon.textContent = '\uD83D\uDCC1';
+            row.appendChild(icon);
+            const nm = document.createElement('span');
+            nm.className = 'tree-name dir-name';
+            nm.textContent = name;
+            row.appendChild(nm);
+
+            const children = document.createElement('div');
+            children.className = 'tree-children';
+            row.onclick = function() {
+                children.classList.toggle('open');
+                chev.classList.toggle('open');
+            };
+            wrap.appendChild(row);
+            wrap.appendChild(children);
+            parent.appendChild(wrap);
+            renderRepoNode(val.children, children, depth + 1, guideFlags.concat([true]));
+        } else {
+            const el = document.createElement('div');
+            el.className = 'repo-file';
+            el.dataset.path = val.relative_path;
+
+            const row = document.createElement('div');
+            row.className = 'tree-row';
+            row.appendChild(makeIndent(depth, guideFlags));
+            const chev = document.createElement('span');
+            chev.className = 'tree-chev empty';
+            row.appendChild(chev);
+            const fi = getFileIcon(name);
+            const icon = document.createElement('span');
+            icon.className = 'tree-icon ' + fi.cls;
+            icon.textContent = fi.ch;
+            row.appendChild(icon);
+            const nm = document.createElement('span');
+            nm.className = 'tree-name';
+            nm.style.color = '#aaa';
+            nm.textContent = name;
+            row.appendChild(nm);
+
+            // Check if this file has changes in any agent session
+            const sessionStatus = getSessionFileStatus(val.relative_path);
+            if (sessionStatus) {
+                const st = document.createElement('span');
+                st.className = 'tree-status st-' + sessionStatus;
+                st.textContent = sessionStatus;
+                row.appendChild(st);
+            }
+
+            row.onclick = function() {
+                document.querySelectorAll('.tree-row.active').forEach(a => a.classList.remove('active'));
+                this.classList.add('active');
+                loadRepoFileDetail(val.relative_path);
+            };
+            el.appendChild(row);
+            parent.appendChild(el);
+        }
+    }
+}
+
+function getSessionFileStatus(path) {
+    if (!agentSessions.length) return null;
+    for (const s of agentSessions) {
+        if (selectedSession !== 'all' && s.session_id !== selectedSession) continue;
+        for (const f of s.files) {
+            if (f.path === path) {
+                if (f.status === 'modified') return 'M';
+                if (f.status === 'new') return 'A';
+                if (f.status === 'deleted') return 'D';
+            }
+        }
+    }
+    return null;
+}
+
+function loadRepoFileDetail(path) {
+    document.getElementById('sbFile').textContent = path;
+    const panel = document.getElementById('detailPanel');
+    panel.innerHTML = '<div class="tree-loading">Loading...</div>';
+    fetch('/api/repo-file-content/' + encodeURI(path))
+        .then(r => r.json())
+        .then(data => {
+            if (data.error) { panel.innerHTML = '<div class="text-danger p-3">' + data.error + '</div>'; return; }
+            let html = '<div class="p-3">'
+                + '<div class="d-flex align-items-center gap-2 mb-2">'
+                + '<span class="tree-icon ' + getFileIcon(path.split('/').pop() || path).cls + '">'
+                + getFileIcon(path.split('/').pop() || path).ch + '</span>'
+                + '<span style="font-family:Cascadia Code,Consolas,monospace; font-size:0.82rem; word-break:break-all;">' + escHtml(path) + '</span>'
+                + '<span style="font-size:0.68rem; color:#555; margin-left:auto;">' + data.lines + ' lines</span>'
+                + '</div>';
+            if (data.is_binary) {
+                html += '<div style="color:#555; padding:40px; text-align:center;">[Binary file]</div>';
+            } else {
+                const lines = data.content.split('\n');
+                html += '<div style="overflow:auto; border:1px solid #2a2d31; border-radius:4px;">'
+                    + '<table style="width:100%; border-collapse:collapse; font-family:Cascadia Code,Consolas,monospace; font-size:0.76rem;">';
+                for (let i = 0; i < lines.length; i++) {
+                    const escaped = lines[i].replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+                    html += '<tr><td style="width:38px; min-width:38px; text-align:right; color:#4a4e54; user-select:none; padding-right:8px; border-right:1px solid #2a2d31; font-size:0.68rem;">'
+                        + (i+1) + '</td><td style="padding:0 8px; white-space:pre-wrap; word-break:break-all; color:#aaa;">'
+                        + escaped + '</td></tr>';
+                }
+                html += '</table></div>';
+            }
+            html += '</div>';
+            panel.innerHTML = html;
+        })
+        .catch(err => { panel.innerHTML = '<div class="text-danger p-3">' + err + '</div>'; });
 }
 
 function escHtml(s) {
@@ -487,177 +1011,123 @@ function escHtml(s) {
     return d.innerHTML;
 }
 
-/* ======== UPDATE FILE ITEM IN DOM ======== */
-function updateFileItemDOM(itemEl, resolved) {
-    itemEl.dataset.resolved = resolved ? '1' : '0';
-    const cb = itemEl.querySelector('.done-check');
-    if (cb) {
-        cb.checked = resolved;
-        cb.title = resolved ? 'Confirmed — click to unconfirm' : 'Click to confirm this selection';
-    }
-    const badge = itemEl.querySelector('.file-name-row .badge');
-    if (badge && itemEl.dataset.cat === 'conflict') {
-        badge.className = 'badge ' + (resolved ? 'bg-primary' : 'bg-warning text-dark');
-        badge.style.cssText = 'font-size:0.55rem;width:44px;';
-        badge.textContent = resolved ? 'Done' : 'Review';
-    }
-}
-
-/* ======== DONE CHECKBOX (confirm/unconfirm) ======== */
-function toggleDone(fp, checkbox, itemEl) {
-    fetch('/resolve-toggle', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/x-www-form-urlencoded'},
-        body: 'filepath=' + encodeURIComponent(fp)
-    })
-    .then(r => r.json())
-    .then(data => {
-        updateFileItemDOM(itemEl, data.resolved);
-        if (itemEl.dataset.cat === 'conflict') {
-            markFileResolved(fp, data.resolved);
-        }
-    });
-}
-
-/* ======== ACCEPT ALL DEFAULTS ======== */
-function acceptAllDefaults() {
-    if (!confirm('Mark all unresolved conflicts as resolved with their current default selection?')) return;
-    fetch('/resolve-accept-defaults', { method: 'POST' })
+/* ================================================================
+   AGENT SESSIONS
+   ================================================================ */
+function loadSessions() {
+    fetch('/agent/api/sessions-browse')
         .then(r => r.json())
         .then(data => {
-            // Collect ALL unresolved conflict paths from TREE data (not DOM)
-            const paths = [];
-            collectUnresolvedPaths(TREE, paths);
-            markManyResolved(paths);
-
-            // Update any DOM items that are rendered
-            document.querySelectorAll('.file-item[data-cat="conflict"][data-resolved="0"]').forEach(el => {
-                updateFileItemDOM(el, true);
-            });
-
-            alert('Accepted defaults for ' + data.count + ' conflicts.');
-        });
+            agentSessions = data.sessions || [];
+            const list = document.getElementById('sessionList');
+            const badge = document.getElementById('sessionBadge');
+            badge.textContent = agentSessions.length;
+            if (agentSessions.length > 0) badge.classList.add('warn');
+            list.innerHTML = '';
+            for (const s of agentSessions) {
+                const card = document.createElement('div');
+                card.className = 'session-card';
+                card.dataset.sid = s.session_id;
+                card.onclick = function() { selectSession(s.session_id, card); };
+                card.innerHTML =
+                    '<span class="sc-dot ' + (s.status || '') + '"></span>' +
+                    '<span class="sc-task">' + escHtml(s.task || s.session_id.substring(0, 12)) + '</span>' +
+                    '<span class="sc-count">' + s.modified_count + ' files</span>';
+                list.appendChild(card);
+            }
+            // If no sessions, collapse the section
+            if (agentSessions.length === 0) {
+                document.getElementById('sessionSection').classList.add('collapsed-section');
+                document.querySelector('#sessionSection .section-header').classList.add('collapsed-hdr');
+            }
+        })
+        .catch(() => {});
 }
 
-function collectUnresolvedPaths(node, paths) {
-    for (const val of Object.values(node)) {
-        if (val._type === 'file' && val.category === 'conflict' && !val.resolved) {
-            paths.push(val.relative_path);
-        } else if (val._type === 'dir') {
-            collectUnresolvedPaths(val.children, paths);
-        }
+function selectSession(sid, cardEl) {
+    selectedSession = sid;
+    document.querySelectorAll('.session-card').forEach(c => c.classList.remove('active'));
+    if (cardEl) cardEl.classList.add('active');
+
+    // Update status bar
+    if (sid === 'all') {
+        document.getElementById('sbSession').textContent = '';
+    } else {
+        const s = agentSessions.find(s => s.session_id === sid);
+        document.getElementById('sbSession').textContent = s ? (s.task || sid.substring(0,12)) : sid;
+    }
+
+    // Re-render repo tree if loaded (to update M/A/D markers)
+    if (repoTreeLoaded) {
+        const container = document.getElementById('repoTreeContainer');
+        container.innerHTML = '';
+        renderRepoNode(REPO_TREE, container, 0, []);
     }
 }
 
-/* ======== ACCEPT DEFAULTS FOR FOLDER ======== */
-function acceptDefaultsForFolder(prefix, wrapperEl) {
-    fetch('/resolve-accept-defaults', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/x-www-form-urlencoded'},
-        body: 'prefix=' + encodeURIComponent(prefix)
-    })
-    .then(r => r.json())
-    .then(data => {
-        if (data.count === 0) { alert('No unresolved conflicts in this folder.'); return; }
+/* ================================================================
+   SIDEBAR SECTIONS
+   ================================================================ */
+function toggleSection(name) {
+    const section = document.getElementById(name + 'Section');
+    const header = section.querySelector('.section-header');
+    section.classList.toggle('collapsed-section');
+    header.classList.toggle('collapsed-hdr');
+    // If expanding files section, make it fill
+    if (name === 'files' && !section.classList.contains('collapsed-section')) {
+        section.classList.add('expanded');
+    }
+}
 
-        // Collect unresolved paths under this prefix from TREE data
-        const dirNode = getTreeNode(prefix);
-        if (dirNode) {
-            const paths = [];
-            collectUnresolvedPaths(dirNode, paths);
-            markManyResolved(paths);
+/* ================================================================
+   SIDEBAR RESIZE & COLLAPSE
+   ================================================================ */
+const sidebar = document.getElementById('sidebar');
+const resizeHandle = document.getElementById('resizeHandle');
+
+function toggleSidebar() {
+    const collapsed = sidebar.classList.toggle('collapsed');
+    resizeHandle.style.display = collapsed ? 'none' : '';
+}
+
+(function initResize() {
+    let startX, startW;
+    resizeHandle.addEventListener('mousedown', function(e) {
+        e.preventDefault();
+        startX = e.clientX;
+        startW = sidebar.offsetWidth;
+        resizeHandle.classList.add('dragging');
+        document.body.style.cursor = 'col-resize';
+        document.body.style.userSelect = 'none';
+        function onMove(e) {
+            sidebar.style.width = Math.max(180, Math.min(startW + (e.clientX - startX), window.innerWidth * 0.6)) + 'px';
         }
-
-        // Update any DOM items that are rendered
-        document.querySelectorAll('.file-item[data-cat="conflict"][data-resolved="0"]').forEach(el => {
-            const path = el.dataset.path || '';
-            if (path.startsWith(prefix + '/') || path === prefix) {
-                updateFileItemDOM(el, true);
-            }
-        });
-    });
-}
-
-/* ======== LOAD DETAIL PANEL ======== */
-function loadDetail(fp, el) {
-    if (currentItem) currentItem.querySelector('.file-name-row').classList.remove('active');
-    el.querySelector('.file-name-row').classList.add('active');
-    currentItem = el;
-
-    const ch = el.querySelector('.fchev'), vb = el.querySelector('.ver-block');
-    if (vb && !vb.classList.contains('open')) { ch.classList.add('open'); vb.classList.add('open'); }
-
-    const panel = document.getElementById('detailPanel');
-    panel.innerHTML = '<div class="text-center p-4 text-muted">Loading...</div>';
-    fetch('/api/file-detail/' + fp)
-        .then(r => r.text())
-        .then(html => {
-            panel.innerHTML = html;
-            currentHunkIdx = -1;
-            setTimeout(() => {
-                const d = panel.querySelector('.sbs-row-delete,.sbs-row-insert,.sbs-row-replace');
-                if (d) d.scrollIntoView({block:'center', behavior:'smooth'});
-            }, 50);
-        })
-        .catch(err => { panel.innerHTML = '<div class="text-danger p-4">' + err + '</div>'; });
-}
-
-/* ======== PICK VERSION ======== */
-function pickVer(fp, idx, itemEl) {
-    fetch('/resolve', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/x-www-form-urlencoded'},
-        body: 'filepath=' + encodeURIComponent(fp) + '&selected_index=' + idx + '&next_path='
-    }).then(() => {
-        itemEl.querySelectorAll('.ver-row input[type=radio]').forEach((r, i) => { r.checked = (i === idx); });
-
-        const wasUnresolved = itemEl.dataset.resolved === '0' && itemEl.dataset.cat === 'conflict';
-        updateFileItemDOM(itemEl, true);
-        if (wasUnresolved) {
-            markFileResolved(fp, true);
+        function onUp() {
+            document.removeEventListener('mousemove', onMove);
+            document.removeEventListener('mouseup', onUp);
+            resizeHandle.classList.remove('dragging');
+            document.body.style.cursor = '';
+            document.body.style.userSelect = '';
         }
-        if (currentItem === itemEl) loadDetail(fp, itemEl);
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
     });
-}
+})();
 
-/* ======== FILTERS ======== */
-const fC = document.getElementById('fC');
-const fU = document.getElementById('fU');
-const fI = document.getElementById('fI');
-const sI = document.getElementById('searchInput');
-
-function applyFilters() {
-    const s = sI.value.toLowerCase();
-    const show = { conflict: fC.checked, unique: fU.checked, identical: fI.checked };
-
-    document.querySelectorAll('.file-item').forEach(el => {
-        const catOk = show[el.dataset.cat];
-        const nameOk = !s || (el.dataset.name || '').includes(s) || (el.dataset.path || '').toLowerCase().includes(s);
-        el.style.display = (catOk && nameOk) ? '' : 'none';
-    });
-
-    document.querySelectorAll('.dir-wrapper').forEach(dw => {
-        const childContainer = dw.querySelector('.dir-children');
-        if (!childContainer) return;
-        const hasVisibleFile = childContainer.querySelector('.file-item:not([style*="display: none"])');
-        const hasVisibleDir = childContainer.querySelector('.dir-wrapper:not([style*="display: none"])');
-        dw.style.display = (hasVisibleFile || hasVisibleDir || !s) ? '' : 'none';
-    });
-
-    allFileElements = Array.from(document.querySelectorAll('.file-item')).filter(el => el.style.display !== 'none');
-}
-
-fC.addEventListener('change', applyFilters);
-fU.addEventListener('change', applyFilters);
-fI.addEventListener('change', applyFilters);
-sI.addEventListener('input', applyFilters);
-
-/* ======== KEYBOARD NAV ======== */
+/* ================================================================
+   KEYBOARD NAV
+   ================================================================ */
 document.addEventListener('keydown', function(e) {
     if (e.target.matches('input,textarea,select')) {
         if (e.key === 'Escape') e.target.blur();
         return;
     }
+
+    // Ctrl+B toggle sidebar
+    if (e.ctrlKey && e.key === 'b') { e.preventDefault(); toggleSidebar(); return; }
+    // Ctrl+P focus search
+    if (e.ctrlKey && e.key === 'p') { e.preventDefault(); sI.focus(); return; }
+
     const items = allFileElements.filter(i => i.style.display !== 'none');
     if (!items.length) return;
     let idx = currentItem ? items.indexOf(currentItem) : -1;
@@ -676,36 +1146,115 @@ document.addEventListener('keydown', function(e) {
         e.preventDefault();
         navHunk(e.key === 'ArrowDown' ? 'next' : 'prev');
     } else if (e.key === 'Enter' && currentItem) {
-        window.open('/conflict/' + currentItem.dataset.path, '_blank');
+        window.open('/merge/' + currentItem.dataset.path, '_blank');
     } else if (e.key === '/') {
         e.preventDefault();
         sI.focus();
-    } else if (e.key === 'd' && currentItem) {
-        const cb = currentItem.querySelector('.done-check');
-        if (cb) cb.click();
     }
 });
 
 function navHunk(dir) {
     const panel = document.getElementById('detailPanel');
-    const all = panel.querySelectorAll('.sbs-row-delete,.sbs-row-insert,.sbs-row-replace');
+    const all = panel.querySelectorAll('.sbs-row-delete,.sbs-row-insert,.sbs-row-replace,.r-del,.r-ins,.r-rep');
     if (!all.length) return;
     const starts = [];
     all.forEach(el => {
         const prev = el.previousElementSibling;
-        if (!prev || !(prev.classList.contains('sbs-row-delete') || prev.classList.contains('sbs-row-insert') || prev.classList.contains('sbs-row-replace')))
+        if (!prev || !prev.classList.toString().match(/r-(del|ins|rep)|sbs-row-(delete|insert|replace)/))
             starts.push(el);
     });
     if (dir === 'next') currentHunkIdx = Math.min(currentHunkIdx + 1, starts.length - 1);
     else currentHunkIdx = Math.max(currentHunkIdx - 1, 0);
     starts[currentHunkIdx].scrollIntoView({block: 'center', behavior: 'smooth'});
     starts[currentHunkIdx].style.outline = '2px solid #0d6efd';
-    setTimeout(() => { starts[currentHunkIdx].style.outline = ''; }, 800);
-    const c = panel.querySelector('.diff-counter');
-    if (c) c.textContent = 'Diff ' + (currentHunkIdx + 1) + '/' + starts.length;
+    setTimeout(() => { if (starts[currentHunkIdx]) starts[currentHunkIdx].style.outline = ''; }, 800);
 }
 
-/* ======== INIT ======== */
+/* ================================================================
+   MERGE TO REPO (agent review sessions)
+   ================================================================ */
+const AGENT_SESSION_ID = {{ (agent_session_id | tojson) if agent_session_id else 'null' }};
+
+function mergeToRepo(mode) {
+    if (!AGENT_SESSION_ID) return;
+    const btn = document.getElementById('mergeRepoBtn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Merging...'; }
+    fetch('/agent/api/merge-to-repo', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ agent_session_id: AGENT_SESSION_ID, mode: mode })
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.ok) {
+            const msg = data.message || ('Merged ' + data.merged + ' files.');
+            if (btn) { btn.textContent = '\u2713 ' + msg; btn.style.color = '#22c55e'; }
+            // Update status bar
+            const sb = document.getElementById('sbStats');
+            if (sb) sb.innerHTML = '<span style="color:#22c55e;">\u2713 Merged to repo</span>';
+        } else {
+            alert('Merge failed: ' + (data.error || 'Unknown error'));
+            if (btn) { btn.disabled = false; btn.textContent = 'Merge Resolved to Repo'; }
+        }
+    })
+    .catch(err => {
+        alert('Error: ' + err);
+        if (btn) { btn.disabled = false; btn.textContent = 'Merge Resolved to Repo'; }
+    });
+}
+
+function acceptAllAndMerge() {
+    if (!AGENT_SESSION_ID) return;
+    if (!confirm('Accept all default selections and merge changes to the repo?')) return;
+    const btn = document.getElementById('acceptMergeBtn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Accepting...'; }
+
+    // Step 1: Accept all defaults
+    fetch('/resolve-accept-defaults', { method: 'POST' })
+        .then(r => r.json())
+        .then(data => {
+            // Update UI
+            const paths = [];
+            collectUnresolvedPaths(TREE, paths);
+            markManyResolved(paths);
+            document.querySelectorAll('.file-item[data-cat="conflict"][data-resolved="0"]').forEach(el => {
+                updateFileItemDOM(el, true);
+            });
+            document.querySelectorAll('.dir-wrapper[data-path]').forEach(w => updateDirBadge(w));
+
+            // Step 2: Merge to repo
+            if (btn) btn.textContent = 'Merging...';
+            return fetch('/agent/api/merge-to-repo', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ agent_session_id: AGENT_SESSION_ID, mode: 'all' })
+            });
+        })
+        .then(r => r.json())
+        .then(data => {
+            if (data.ok) {
+                const msg = data.message || ('Merged ' + data.merged + ' files.');
+                if (btn) { btn.textContent = '\u2713 ' + msg; btn.style.background = '#22c55e'; }
+                const sb = document.getElementById('sbStats');
+                if (sb) sb.innerHTML = '<span style="color:#22c55e;">\u2713 Merged to repo</span>';
+                // Also update the merge-resolved button
+                const mb = document.getElementById('mergeRepoBtn');
+                if (mb) { mb.disabled = true; mb.textContent = '\u2713 Merged'; mb.style.color = '#22c55e'; }
+            } else {
+                alert('Merge failed: ' + (data.error || 'Unknown error'));
+                if (btn) { btn.disabled = false; btn.textContent = 'Accept All & Merge'; btn.style.background = '#1a5c2e'; }
+            }
+        })
+        .catch(err => {
+            alert('Error: ' + err);
+            if (btn) { btn.disabled = false; btn.textContent = 'Accept All & Merge'; btn.style.background = '#1a5c2e'; }
+        });
+}
+
+/* ================================================================
+   INIT
+   ================================================================ */
 loadTree();
+loadSessions();
 </script>
 {% endblock %}

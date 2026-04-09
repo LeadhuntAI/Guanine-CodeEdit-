@@ -1,18 +1,4 @@
 {
-  "mcpServers": {
-    "jcodemunch": {
-      "command": "C:\\Projects\\360Marketing\\Guanine(CodeEdit)\\.venv\\Scripts\\python.exe",
-      "args": [
-        "-m",
-        "jcodemunch_mcp.server",
-        "--storage",
-        "C:\\Projects\\360Marketing\\Guanine(CodeEdit)\\.code-index"
-      ],
-      "env": {
-        "PYTHONPATH": "C:\\Projects\\360Marketing\\Guanine(CodeEdit)\\spark\\vendors\\jcodemunch\\src"
-      }
-    }
-  },
   "hooks": {
     "PreToolUse": [
       {
@@ -23,6 +9,15 @@
             "command": "bash .claude/hooks/sandbox-guard.sh"
           }
         ]
+      },
+      {
+        "matcher": "Read|Grep|Glob",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/jcodemunch-prefer.sh"
+          }
+        ]
       }
     ],
     "SessionStart": [
@@ -31,6 +26,17 @@
           {
             "type": "command",
             "command": "bash .claude/hooks/session-start.sh"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/jcodemunch-reindex.sh"
           }
         ]
       }

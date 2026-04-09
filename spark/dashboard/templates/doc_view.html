@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% block title_suffix %} - {{ detail.area_name }}{% endblock %}
+
+{% block content %}
+<h1><a href="/docs" style="color: var(--text-dim);">Docs</a> / {{ detail.area_name }}</h1>
+
+{# ── Area Grouping Rationale ── #}
+{% if detail.description or detail.rationale %}
+<div class="info-box">
+  <div class="info-label">Why these files are grouped together</div>
+  {% if detail.description %}
+  <div style="margin-bottom: 8px;">{{ detail.description }}</div>
+  {% endif %}
+  {% if detail.file_patterns %}
+  <div style="margin-bottom: 8px;">
+    <span style="color: var(--text-dim);">File patterns:</span>
+    {% for p in detail.file_patterns %}
+      <code>{{ p }}</code>{% if not loop.last %}, {% endif %}
+    {% endfor %}
+  </div>
+  {% endif %}
+  {% if detail.priority %}
+  <div style="margin-bottom: 8px;">
+    <span style="color: var(--text-dim);">Priority:</span>
+    <span class="badge {% if detail.priority == 1 %}badge-red{% elif detail.priority == 2 %}badge-yellow{% else %}badge-grey{% endif %}">P{{ detail.priority }}</span>
+  </div>
+  {% endif %}
+  {% if detail.rationale %}
+  <details style="margin-top: 8px;">
+    <summary style="cursor: pointer; color: var(--accent); font-size: 12px;">Planner rationale</summary>
+    <div style="margin-top: 8px; color: var(--text-dim); font-size: 12px; line-height: 1.6;">{{ detail.rationale }}</div>
+  </details>
+  {% endif %}
+</div>
+{% endif %}
+
+{# ── Metadata sidebar ── #}
+<div style="display: grid; grid-template-columns: 1fr 280px; gap: 20px; align-items: start;">
+
+{# ── Doc Content ── #}
+<div>
+  <h2>Documentation</h2>
+  {% if detail.content_html %}
+  <div class="md-content">{{ detail.content_html | safe }}</div>
+  {% else %}
+  <div class="empty">Documentation file not found on disk.</div>
+  {% endif %}
+</div>
+
+{# ── Sidebar ── #}
+<div>
+  <h2>Info</h2>
+  <div class="card">
+    <table>
+      <tr><td style="color: var(--text-dim); width: 90px;">Area</td><td>{{ detail.area_name }}</td></tr>
+      <tr><td style="color: var(--text-dim);">Status</td><td>
+        {% if detail.status == 'current' %}<span class="badge badge-green">current</span>
+        {% else %}<span class="badge badge-yellow">{{ detail.status }}</span>{% endif %}
+      </td></tr>
+      <tr><td style="color: var(--text-dim);">Generated</td><td style="font-size: 11px;">{{ detail.generated_at[:19] if detail.generated_at else '-' }}</td></tr>
+      <tr><td style="color: var(--text-dim);">Files</td><td>{{ detail.files_covered|length }}</td></tr>
+      <tr><td style="color: var(--text-dim);">Path</td><td style="font-size: 11px; word-break: break-all;">{{ detail.doc_path }}</td></tr>
+    </table>
+  </div>
+
+  {% if detail.files_covered %}
+  <h2>Files Covered</h2>
+  <div class="card">
+    <table>
+      <thead><tr><th>File</th><th>Lang</th><th>Lines</th></tr></thead>
+      <tbody>
+      {% for f in detail.files_covered %}
+      <tr>
+        <td style="font-size: 11px;">{{ f.path }}</td>
+        <td>{{ f.language or '-' }}</td>
+        <td>{{ f.line_count or 0 }}</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+</div>
+
+</div>
+{% endblock %}
