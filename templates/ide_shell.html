@@ -244,6 +244,9 @@ html, body { margin: 0; padding: 0; height: 100%; overflow: hidden;
     width: 4px; cursor: col-resize; background: transparent;
     flex-shrink: 0; position: relative; z-index: 20;
 }
+.chat-resize-handle::after {
+    content: ''; position: absolute; top: 0; bottom: 0; left: -4px; right: -4px;
+}
 .chat-resize-handle:hover, .chat-resize-handle.dragging { background: #0d6efd; }
 .chat-panel.collapsed + .chat-resize-handle,
 .chat-resize-handle + .chat-panel.collapsed { display: none; }
@@ -1745,6 +1748,8 @@ function renderInlineDiff(container, data, tabId) {
     html += '<div class="idiff-toolbar">' +
         '<button class="idiff-toolbar-btn accept-all" onclick="bulkDecideHunks(\'' + tabId + '\',\'accept\')">Accept All</button>' +
         '<button class="idiff-toolbar-btn reject-all" onclick="bulkDecideHunks(\'' + tabId + '\',\'reject\')">Reject All</button>' +
+        '<button class="idiff-toolbar-btn" style="border-color:#888; margin-left:8px;" onclick="focusPrevUndecided(\'' + tabId + '\')" title="Previous change (&#8593;)">&#9650; Prev</button>' +
+        '<button class="idiff-toolbar-btn" style="border-color:#888;" onclick="focusNextUndecided(\'' + tabId + '\')" title="Next change (&#8595;)">&#9660; Next</button>' +
         '<div style="flex:1;"></div>' +
         (data.session_id ? '<button class="idiff-toolbar-btn" style="border-color:#06b6d4; color:#06b6d4; font-size:0.65rem;" onclick="showWhyThisChange(\'' + escHtml(data.session_id) + '\',\'' + escHtml(data.filepath) + '\')">Why this change?</button>' : '') +
         '<button class="idiff-toolbar-btn collapse-toggle" id="collapseToggle-' + tabId + '" onclick="toggleCollapseAll(\'' + tabId + '\')">Collapse Unchanged</button>' +
@@ -1934,6 +1939,34 @@ function findNextUndecided(tabId, fromIdx) {
         if (!st.decisions[hunkId]) return i;
     }
     return null;
+}
+
+function findPrevUndecided(tabId, fromIdx) {
+    const st = inlineDiffState[tabId];
+    const hunks = getInlineDiffHunks(tabId);
+    for (let i = fromIdx - 1; i >= 0; i--) {
+        const hunkId = parseInt(hunks[i].dataset.hunkId);
+        if (!st.decisions[hunkId]) return i;
+    }
+    for (let i = hunks.length - 1; i >= fromIdx; i--) {
+        const hunkId = parseInt(hunks[i].dataset.hunkId);
+        if (!st.decisions[hunkId]) return i;
+    }
+    return null;
+}
+
+function focusNextUndecided(tabId) {
+    const st = inlineDiffState[tabId];
+    if (!st) return;
+    const idx = findNextUndecided(tabId, st.focusIdx ?? -1);
+    if (idx !== null) focusDiffHunk(tabId, idx);
+}
+
+function focusPrevUndecided(tabId) {
+    const st = inlineDiffState[tabId];
+    if (!st) return;
+    const idx = findPrevUndecided(tabId, st.focusIdx ?? 0);
+    if (idx !== null) focusDiffHunk(tabId, idx);
 }
 
 function decideHunk(tabId, hunkId, decision) {
@@ -4992,15 +5025,20 @@ chatLoadExistingTabs();
         startX = e.clientX;
         startW = panel.offsetWidth;
         handle.classList.add('dragging');
+        document.body.style.cursor = 'col-resize';
+        document.body.style.userSelect = 'none';
+        panel.style.transition = 'none';
         function onMove(e2) {
-            // Chat is on the right, so dragging left increases width
             const delta = startX - e2.clientX;
-            panel.style.width = Math.max(200, Math.min(800, startW + delta)) + 'px';
+            panel.style.width = Math.max(240, Math.min(startW + delta, window.innerWidth * 0.6)) + 'px';
         }
         function onUp() {
             handle.classList.remove('dragging');
             document.removeEventListener('mousemove', onMove);
             document.removeEventListener('mouseup', onUp);
+            panel.style.transition = '';
+            document.body.style.cursor = '';
+            document.body.style.userSelect = '';
         }
         document.addEventListener('mousemove', onMove);
         document.addEventListener('mouseup', onUp);

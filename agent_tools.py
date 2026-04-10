@@ -92,7 +92,7 @@ def _compute_diff_stats(original_path: str, new_content: str) -> tuple[int, int]
 _DEFAULT_IGNORE = {
     '.git', '__pycache__', 'node_modules', '.venv', 'venv', '.env',
     '.tox', '.mypy_cache', '.pytest_cache', 'dist', 'build', '.eggs',
-    '.idea', '.vscode', '.vs',
+    '.idea', '.vscode', '.vs', '.originals',
 }
 
 # Maximum file listing results
@@ -509,6 +509,9 @@ def reconcile_session(session_id: str) -> dict:
     total_added = 0
     total_removed = 0
 
+    # --- Step 0: Ensure .originals/ directory for baseline snapshots ---
+    originals_dir = os.path.join(ws, '.originals')
+
     # --- Step 1: Reconcile already-tracked files ---
     files = agent_schema.get_session_files(session_id)
     tracked_paths = {f['relative_path'] for f in files}
@@ -527,10 +530,21 @@ def reconcile_session(session_id: str) -> dict:
         current_hash = _compute_hash(ws_file)
         if current_hash != f['checkout_hash']:
             repo_file = os.path.join(repo['repo_path'], f['relative_path'])
+
+            # Snapshot the original repo file into .originals/ if not already
+            # done, so inline diffs always have a stable baseline even after
+            # other sessions merge changes to the repo.
+            orig_file = os.path.join(originals_dir, f['relative_path'])
+            if not os.path.isfile(orig_file) and os.path.isfile(repo_file):
+                os.makedirs(os.path.dirname(orig_file), exist_ok=True)
+                shutil.copy2(repo_file, orig_file)
+
+            # Use .originals/ as diff baseline if available (stable), else repo
+            diff_baseline = orig_file if os.path.isfile(orig_file) else repo_file
             try:
                 with open(ws_file, 'r', encoding='utf-8', errors='replace') as fh:
                     new_content = fh.read()
-                added, removed = _compute_diff_stats(repo_file, new_content)
+                added, removed = _compute_diff_stats(diff_baseline, new_content)
             except Exception:
                 added, removed = 0, 0
 

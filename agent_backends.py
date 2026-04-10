@@ -278,6 +278,18 @@ def write_project_opencode_config(repo_path: str) -> str:
     # Ensure opencode.json is in .gitignore so it doesn't get committed
     _ensure_gitignore_entry(repo_path, 'opencode.json')
 
+    # --- Copy AGENTS.md to enforce sandbox rules ---
+    agents_src = os.path.join(guanine_dir, 'AGENTS.md')
+    if os.path.isfile(agents_src):
+        agents_dst = os.path.join(repo_path, 'AGENTS.md')
+        try:
+            import shutil
+            shutil.copy2(agents_src, agents_dst)
+            _ensure_gitignore_entry(repo_path, 'AGENTS.md')
+            logger.info("Copied AGENTS.md to %s", agents_dst)
+        except OSError as e:
+            logger.warning("Could not copy AGENTS.md to %s: %s", repo_path, e)
+
     return config_path
 
 

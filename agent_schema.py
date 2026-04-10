@@ -534,6 +534,17 @@ def update_session_status(session_id: str, status: str,
     return get_session(session_id)
 
 
+def rename_session(session_id: str, task_description: str) -> Optional[dict]:
+    """Rename a session's task description."""
+    db = get_agent_db()
+    db.execute(
+        'UPDATE agent_sessions SET task_description = ? WHERE session_id = ?',
+        (task_description, session_id)
+    )
+    db.commit()
+    return get_session(session_id)
+
+
 def set_merge_session_id(session_id: str, merge_session_id: str):
     """Link an agent session to its file_merger review session."""
     db = get_agent_db()

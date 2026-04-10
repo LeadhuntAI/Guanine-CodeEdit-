@@ -1094,6 +1094,29 @@ app.secret_key = 'file-merger-recovery-tool-2026'
 from agent_review import agent_bp
 app.register_blueprint(agent_bp, url_prefix='/agent')
 
+def _resolve_target_dir():
+    """Return the effective target directory.
+
+    Uses the merge engine's configured target_dir if set, otherwise falls back
+    to the first registered repo's path.  This ensures save/read endpoints work
+    even when no explicit target has been configured via the setup wizard.
+    """
+    target = state.get('target_dir', '')
+    if target and os.path.isdir(target):
+        return target
+    # Fallback: use the registered repo path
+    try:
+        import agent_schema
+        repos = agent_schema.list_repos()
+        if repos:
+            rp = repos[0].get('repo_path', '')
+            if rp and os.path.isdir(rp):
+                return rp
+    except Exception:
+        pass
+    return ''
+
+
 # Global state
 state = {
     'sources': [],
@@ -1609,7 +1632,7 @@ def resolve_all_latest():
 @app.route('/execute', methods=['POST'])
 def execute():
     inv = state['inventory']
-    target = state['target_dir']
+    target = _resolve_target_dir()
     mode = request.form.get('mode', 'all')  # 'all', 'auto', 'resolved'
 
     if mode == 'auto':
@@ -1955,7 +1978,7 @@ def browse_tree_api():
 @app.route('/api/repo-tree')
 def repo_tree_api():
     """Return the full file tree of the target (original repo) directory."""
-    target = state.get('target_dir', '')
+    target = _resolve_target_dir()
     if not target or not os.path.isdir(target):
         return jsonify({'tree': {}, 'root': ''})
 
@@ -1996,10 +2019,37 @@ def repo_tree_api():
     return jsonify({'tree': tree, 'root': target})
 
 
+@app.route('/api/target-dir', methods=['GET', 'POST'])
+def target_dir_api():
+    """Get or set the target directory."""
+    if request.method == 'POST':
+        data = request.get_json()
+        path = data.get('path', '').strip()
+        if not path:
+            return jsonify({'error': 'No path provided'}), 400
+        if not os.path.isdir(path):
+            return jsonify({'error': f'Directory not found: {path}'}), 400
+        state['target_dir'] = path
+        # Persist to session config
+        try:
+            sid = state.get('_session_id') or get_active_session_id()
+            if sid:
+                save_config(state['sources'], path, state['ignore_patterns'])
+        except Exception:
+            pass
+        return jsonify({'ok': True, 'target_dir': path})
+    else:
+        effective = _resolve_target_dir()
+        return jsonify({
+            'target_dir': state.get('target_dir', ''),
+            'effective_target_dir': effective,
+        })
+
+
 @app.route('/api/repo-file-content/<path:filepath>')
 def repo_file_content_api(filepath):
     """Return raw content of a file from the target directory."""
-    target = state.get('target_dir', '')
+    target = _resolve_target_dir()
     if not target:
         return jsonify({'error': 'No target directory configured'}), 400
 
@@ -2044,7 +2094,7 @@ def save_repo_file():
     if not filepath:
         return jsonify({'error': 'No filepath provided'}), 400
 
-    target = state.get('target_dir', '')
+    target = _resolve_target_dir()
     if not target:
         return jsonify({'error': 'No target directory configured'}), 400
 
@@ -2119,7 +2169,7 @@ def search_api():
     if not query or len(query) < 2:
         return jsonify({'results': [], 'count': 0})
 
-    target = state.get('target_dir', '')
+    target = _resolve_target_dir()
     if not target or not os.path.isdir(target):
         return jsonify({'results': [], 'count': 0, 'error': 'No target directory'})
 

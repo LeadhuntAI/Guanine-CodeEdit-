@@ -44,9 +44,16 @@ logger = logging.getLogger(__name__)
 mcp = FastMCP(
     name="guanine-codeedit",
     instructions=(
-        "Guanine CodeEdit agent sandbox. Agents work on file copies in isolated "
-        "workspaces. Use checkout_file to get files, edit them, then signal_done "
-        "when finished. A human reviews and merges changes back to the repo."
+        "Guanine CodeEdit agent sandbox. "
+        "IMPORTANT: Follow this workflow for ALL file modifications:\n"
+        "1. At conversation start, call activate_for_backend_session with your "
+        "OpenCode session ID to bind to the correct Guanine sandbox session. "
+        "If that fails, call activate_session with the GUANINE_SESSION_ID.\n"
+        "2. Call checkout_file for EVERY file you want to modify BEFORE editing it\n"
+        "3. Use write_file to save changes (writes go to the sandbox workspace)\n"
+        "4. When done with all changes, call signal_done with a summary\n"
+        "A human will review and merge your changes back to the repo.\n"
+        "NEVER edit files directly outside the sandbox — always use checkout_file first."
     ),
 )
 
@@ -68,9 +75,28 @@ def _require_session() -> tuple[dict, dict]:
 
 
 def _auto_resume():
-    """Auto-activate the most recent running session on startup."""
+    """Auto-activate a session on startup.
+
+    Priority:
+    1. ``GUANINE_SESSION_ID`` env var — set by Guanine when it starts
+       OpenCode with a specific session bound via opencode.json.
+    2. Fallback: most recent running session (legacy behaviour).
+    """
     global _active_session, _active_repo
     try:
+        # Prefer explicit session from env (set by write_project_opencode_config)
+        env_sid = os.environ.get('GUANINE_SESSION_ID', '').strip()
+        if env_sid:
+            _active_session = agent_schema.get_session(env_sid)
+            if _active_session:
+                _active_repo = agent_schema.get_repo(_active_session['repo_id'])
+                if _active_session['status'] == 'pending':
+                    agent_schema.update_session_status(env_sid, 'running')
+                    _active_session['status'] = 'running'
+                logger.info("Auto-activated session from GUANINE_SESSION_ID: %s", env_sid)
+                return
+
+        # Fallback: most recent running session
         sessions = agent_schema.list_sessions(status='running')
         if sessions:
             s = sessions[0]
@@ -154,6 +180,26 @@ def create_session(repo_id: str, task_description: str,
         "status": "running",
         "message": "Session created and activated. Use checkout_file to get files.",
     }, indent=2)
+
+
+@mcp.tool()
+def activate_for_backend_session(backend_session_id: str) -> str:
+    """Activate the Guanine sandbox session linked to an OpenCode session ID.
+
+    Call this at the START of every conversation if you are running inside
+    OpenCode. Pass your OpenCode session ID and this will find and activate
+    the corresponding Guanine sandbox session so checkout_file / write_file /
+    signal_done are scoped correctly."""
+    global _active_session, _active_repo
+    db = agent_schema.get_agent_db()
+    row = db.execute(
+        'SELECT session_id FROM agent_sessions WHERE backend_session_id = ? '
+        'ORDER BY created_at DESC LIMIT 1',
+        (backend_session_id,)
+    ).fetchone()
+    if not row:
+        return json.dumps({"error": f"No Guanine session linked to backend session: {backend_session_id}"})
+    return activate_session(row['session_id'])
 
 
 @mcp.tool()

@@ -831,6 +831,39 @@ def api_sessions_browse():
         files = agent_schema.get_session_files(s['session_id'])
         decisions = {d['relative_path']: d['decision']
                      for d in agent_schema.get_review_decisions(s['session_id'])}
+
+        # Auto-detect already-merged files: workspace == repo means changes
+        # were already applied. Record acceptance for any unreviewed matches.
+        repo = agent_schema.get_repo(s.get('repo_id', ''))
+        ws_path = s.get('workspace_path', '')
+        repo_path = repo['repo_path'] if repo else ''
+        auto_accepted = 0
+        for f in files:
+            rp = f.get('relative_path', '')
+            if rp in decisions:
+                continue
+            if f.get('status') not in ('modified', 'new'):
+                continue
+            ws_file = os.path.join(ws_path, rp) if ws_path else ''
+            repo_file = os.path.join(repo_path, rp) if repo_path else ''
+            if ws_file and repo_file and os.path.isfile(ws_file) and os.path.isfile(repo_file):
+                try:
+                    import hashlib
+                    def _hash(p):
+                        h = hashlib.sha256()
+                        with open(p, 'rb') as fh:
+                            for chunk in iter(lambda: fh.read(65536), b''):
+                                h.update(chunk)
+                        return h.hexdigest()
+                    if _hash(ws_file) == _hash(repo_file):
+                        agent_schema.record_review_decision(
+                            s['session_id'], rp, 'accepted',
+                            reviewer_notes='Auto-accepted: workspace matches repo')
+                        decisions[rp] = 'accepted'
+                        auto_accepted += 1
+                except (OSError, PermissionError):
+                    pass
+
         file_list = []
         for f in files:
             rp = f.get('relative_path', '')
@@ -843,18 +876,33 @@ def api_sessions_browse():
                 'reviewed': rp in decisions,
                 'decision': decisions.get(rp),
             })
+        mod_count = sum(1 for f in file_list if f['status'] in ('modified', 'new'))
+        reviewed_count = sum(1 for f in file_list if f.get('reviewed'))
+
+        # Auto-transition: if all modified files are reviewed, mark as merged
+        session_status = s.get('status', '')
+        if (mod_count > 0 and reviewed_count >= mod_count
+                and session_status in ('completed', 'review')):
+            try:
+                agent_schema.update_session_status(s['session_id'], 'merged')
+                session_status = 'merged'
+            except Exception:
+                pass
+
         result.append({
             'session_id': s['session_id'],
             'task_description': s.get('task_description', ''),
             'task': s.get('task_description', ''),
-            'status': s.get('status', ''),
+            'status': session_status,
             'created': s.get('created_at', ''),
             'model': s.get('agent_model', ''),
             'backend': s.get('backend', 'builtin'),
             'parent_session_id': s.get('parent_session_id'),
             'files': file_list,
             'file_count': len(file_list),
-            'modified_count': sum(1 for f in file_list if f['status'] in ('modified', 'new')),
+            'modified_count': mod_count,
+            'reviewed_count': reviewed_count,
+            'unreviewed_count': mod_count - reviewed_count,
         })
     return jsonify(sessions=result)
 
@@ -1024,6 +1072,20 @@ def api_review_decision():
         'all_reviewed': all_reviewed,
         'summary': summary,
     })
+
+
+@agent_bp.route('/api/rename-session', methods=['POST'])
+def api_rename_session():
+    """Rename an agent session's task description."""
+    data = request.get_json(silent=True) or {}
+    session_id = data.get('session_id', '')
+    name = (data.get('name') or '').strip()
+    if not session_id or not name:
+        return jsonify(error='session_id and name required'), 400
+    session = agent_schema.rename_session(session_id, name)
+    if not session:
+        return jsonify(error='Session not found'), 404
+    return jsonify(ok=True, task_description=name)
 
 
 @agent_bp.route('/api/revert-file', methods=['POST'])
@@ -1255,6 +1317,38 @@ def api_repo_file_content(repo_id):
             'line_count': content.count('\n') + 1,
         })
     except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@agent_bp.route('/api/save-repo-file/<repo_id>', methods=['POST'])
+def api_save_repo_file(repo_id):
+    """Save edited file content back to a registered repo."""
+    repo = agent_schema.get_repo(repo_id)
+    if not repo:
+        return jsonify({'error': 'Repo not found'}), 404
+
+    data = request.get_json()
+    filepath = data.get('filepath', '')
+    content = data.get('content', '')
+
+    if not filepath:
+        return jsonify({'error': 'No filepath provided'}), 400
+
+    repo_path = repo['repo_path']
+    resolved = os.path.realpath(os.path.join(repo_path, filepath))
+    base = os.path.realpath(repo_path)
+    if not resolved.startswith(base + os.sep) and resolved != base:
+        return jsonify({'error': 'Path escapes repo directory'}), 403
+
+    if not os.path.isfile(resolved):
+        return jsonify({'error': 'File not found'}), 404
+
+    try:
+        with open(resolved, 'w', encoding='utf-8', newline='') as f:
+            f.write(content)
+        lines = content.count('\n') + (1 if content and not content.endswith('\n') else 0)
+        return jsonify({'ok': True, 'lines': lines, 'size': os.path.getsize(resolved)})
+    except (OSError, PermissionError) as e:
         return jsonify({'error': str(e)}), 500
 
 
