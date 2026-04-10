@@ -84,7 +84,8 @@ Guanine(CodeEdit)/
 ├── agent_workflow.py                      <- Workflow builder, tracked writes, tool registry
 ├── agent_review.py                        <- Flask Blueprint for agent UI + review bridge
 ├── agent_backends.py                      <- Pluggable backend abstraction + port manager
-├── agent_mcp_server.py                    <- MCP server wrapping agent tools
+├── agent_mcp_server.py                    <- MCP server wrapping agent tools (for OpenCode)
+├── orchestrator_mcp_server.py             <- MCP server for external orchestration agents
 ├── git_ops.py                             <- Git clone/branch/push/deploy operations
 ├── templates/                             <- Jinja2 HTML templates
 │   ├── base.html                          <- Base layout (Bootstrap 5 dark theme)
@@ -245,6 +246,33 @@ The sandbox is controlled by the `.claude/sandbox-active` flag file:
 - **One session per task**: Create a new session for each distinct task. Reuse if continuing the same task.
 - **After compaction**: The SessionStart hook re-injects workspace path and sandbox status. Call `mcp__guanine__get_workspace_info()` if needed.
 - **Bash is unrestricted**: You can run git, python, pytest, etc. Do NOT use Bash to write files outside `sessions/` when sandbox is active.
+
+## Orchestrator Mode (Delegating Tasks to OpenCode)
+
+The orchestrator MCP server (`orchestrator_mcp_server.py`) lets you submit coding tasks to OpenCode instead of editing files yourself. OpenCode works autonomously in a sandboxed session while you continue with other work.
+
+### Toggle Commands
+
+Controlled by the `.claude/orchestrator-active` flag file:
+
+- **"orchestrator on"**: Run `touch .claude/orchestrator-active`. You delegate tasks via orchestrator MCP tools.
+- **"orchestrator off"**: Run `rm .claude/orchestrator-active`. You edit files directly as usual.
+- Default: **off** (normal direct editing workflow).
+
+### How to Use (when orchestrator is ON)
+
+1. **Find repos**: `mcp__guanine-orchestrator__list_repos()` — see available repositories
+2. **Submit task**: `mcp__guanine-orchestrator__submit_task(repo_id, "fix the login bug")` — returns task_id
+3. **Check progress**: `mcp__guanine-orchestrator__get_task_status(task_id)` — running/completed/failed
+4. **Get results**: `mcp__guanine-orchestrator__get_task_result(task_id)` — modified files, diff stats, review URL
+5. **Cancel**: `mcp__guanine-orchestrator__cancel_task(task_id)` — abort a running task
+6. **Batch**: `mcp__guanine-orchestrator__batch_submit(json_array)` — submit multiple tasks at once
+
+### Safety
+
+- The orchestrator server **never** runs inside OpenCode — it has a startup guard that refuses to start if `GUANINE_SESSION_ID` is set.
+- OpenCode's `opencode.json` only includes the sandbox MCP server, never the orchestrator.
+- Tasks are fully isolated in sandboxed workspaces. The human reviews all changes before merging.
 
 ## Environment Notes
 

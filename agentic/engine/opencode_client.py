@@ -20,6 +20,7 @@ import logging
 import os
 import shutil
 import subprocess
+import sys
 import threading
 import time
 import urllib.error
@@ -180,11 +181,19 @@ class OpenCodeClient:
         if self.password:
             env['OPENCODE_PASSWORD'] = self.password
 
+        # Detach the server process so it survives the parent exiting.
+        # On Windows, CREATE_NEW_PROCESS_GROUP prevents the child from
+        # being killed when the parent's console group is terminated.
+        creation_flags = 0
+        if sys.platform == 'win32':
+            creation_flags = subprocess.CREATE_NEW_PROCESS_GROUP
+
         self._process = subprocess.Popen(
             cmd, env=env,
             cwd=cwd,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,  # merge stderr into stdout
+            creationflags=creation_flags,
         )
 
         # Stream subprocess output to the console in a background thread.

@@ -234,6 +234,9 @@ def write_project_opencode_config(repo_path: str) -> str:
     guanine_dir = os.path.dirname(os.path.abspath(__file__))
     server_script = os.path.join(guanine_dir, 'agent_mcp_server.py')
 
+    # IMPORTANT: Only expose the sandbox MCP server to OpenCode.
+    # The orchestrator server (orchestrator_mcp_server.py) must NEVER be
+    # added here — it would let OpenCode submit tasks to itself in a loop.
     config = {
         '$schema': 'https://opencode.ai/config.json',
         'mcp': {
@@ -244,6 +247,19 @@ def write_project_opencode_config(repo_path: str) -> str:
             },
         },
     }
+
+    # --- Force the model to the repo's configured default (or GLM 5.1) ---
+    # OpenCode picks its own default model (often deepseek-reasoner) unless
+    # we explicitly set it.  The ``model`` top-level key in opencode.json
+    # uses the ``provider/model`` format.
+    import agent_schema as _schema
+    repo = _schema.get_repo(_schema._repo_id(repo_path))
+    settings = (repo.get('settings') or {}) if repo else {}
+    default_model = settings.get('default_model', '') or 'openrouter/z-ai/glm-5.1'
+    # Normalise: ensure provider prefix is present
+    if '/' not in default_model:
+        default_model = f'openrouter/{default_model}'
+    config['model'] = default_model
 
     # --- Discover jcodemunch from the project's .mcp.json ---
     mcp_json_path = os.path.join(repo_path, '.mcp.json')

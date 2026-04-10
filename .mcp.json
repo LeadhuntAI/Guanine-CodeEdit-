@@ -6,6 +6,12 @@
         "agent_mcp_server.py"
       ]
     },
+    "guanine-orchestrator": {
+      "command": ".venv\\Scripts\\python.exe",
+      "args": [
+        "orchestrator_mcp_server.py"
+      ]
+    },
     "jcodemunch": {
       "command": "C:\\ProgramData\\anaconda3\\python.exe",
       "args": [
