@@ -98,6 +98,12 @@ def get_or_start_repo_server(repo_id: str, api_key: Optional[str] = None,
         if repo_path:
             write_project_opencode_config(repo_path)
 
+        # Ensure the repo's stored API key is used if none was passed.
+        # The env var OPENROUTER_API_KEY may be stale/expired.
+        if not api_key:
+            settings = get_repo_settings(repo_id)
+            api_key = settings.get('openrouter_api_key', '') or None
+
         # Start with a placeholder URL; ensure_server will update base_url
         # once the server reports its actual port.
         client = OpenCodeClient('http://127.0.0.1:0', password=password, api_key=api_key)
